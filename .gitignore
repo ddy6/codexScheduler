@@ -1,0 +1,63 @@
+# Local agent guidance and development records
+AGENTS.md
+AGENTS.local.md
+AGENTS.override.md
+dev_plan.md
+dev_notes.md
+/dev_notes/
+/future_dev/
+/private/
+/scratch/
+/docs/dev/
+/docs/internal/
+/docs/guidance/
+
+# Machine-specific agent configuration; share authored skills under skills/
+/.codex/
+/.agents/
+
+# Credentials and local configuration; publish sanitized examples only
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+/secrets/
+/config.local.*
+
+# Runtime records may contain prompts, absolute paths, logs, or identifiers
+/state/
+/runs/
+/artifacts/
+/logs/
+*.log
+*.pid
+*.pid.lock
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Python environments, caches, and build output
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+/build/
+/dist/
+*.egg-info/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

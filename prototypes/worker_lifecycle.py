@@ -1,4 +1,4 @@
-"""One-job experiment: register, yield, queue completion, verify the same worker."""
+"""Codex Scheduler experiment: register a job, yield, and verify worker continuation."""
 
 import argparse
 from datetime import datetime, timezone
@@ -304,7 +304,7 @@ class Harness:
                     connection = unix_connect(str(socket_path), open_timeout=5, close_timeout=1)
                     rpc = Rpc(None, None, self.handle_request, 5, connection=connection)
                     rpc.call("initialize", {
-                        "clientInfo": {"name": "scheduler_resumer_trial", "version": "0.1"},
+                        "clientInfo": {"name": "codex_scheduler_trial", "version": "0.1"},
                         "capabilities": {"experimentalApi": True},
                     })
                     rpc.send({"method": "initialized", "params": {}})

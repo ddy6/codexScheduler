@@ -1,4 +1,4 @@
-# Scheduler Resumer
+# Codex Scheduler
 
 A small scheduler for bounded Codex engineering work. The goal is to let an
 engineering agent start a job, yield while it runs, and continue when the result
@@ -10,10 +10,14 @@ The worker keeps engineering context and judgment; the scheduler handles waiting
 
 ## Status
 
-Early development. There is no installable scheduler or skill yet.
+Early development. A [local job runner](docs/job-runner.md) now registers commands,
+enforces runtime and log limits, and reconciles durable completion records. It runs
+from the source checkout; there is no installable scheduler or skill yet.
 A [worker lifecycle experiment](docs/worker-lifecycle.md) tests completion delivery
 to a dedicated worker thread. The first local trial passed: the worker yielded,
 received one queued completion, retained context, and returned to idle.
+The runner and worker experiment are separate for now; automatic delivery is the
+next slice.
 
 ## Design
 

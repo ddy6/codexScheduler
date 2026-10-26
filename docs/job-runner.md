@@ -2,12 +2,13 @@
 
 The runner registers and executes bounded local commands. It records a task grant,
 reserves an attempt before starting a wrapper, and saves a completion receipt.
-It does not call Codex or continue a worker thread yet.
+The base runner commands do not call Codex. [Completion delivery](completion-delivery.md)
+can separately be enabled for an explicitly bounded task.
 
 Run from the source checkout with Python 3.11 or newer on a POSIX host. The current
 checks run on macOS; Windows support and package installation come later. The core
-uses the Python standard library. Only the separate worker experiment needs the
-WebSocket dependency.
+uses the Python standard library. Optional Codex delivery and the worker experiment
+need the WebSocket dependency.
 
 ## Try a harmless job
 
@@ -108,5 +109,5 @@ python3 -m unittest discover -s tests -v
 
 Checks cover detached execution after the launching CLI exits, controller reopen,
 launch races, failed spawns, stale receipts, missing leases, runtime and log limits,
-and receipt recovery. Actual machine reboot, extended unattended operation, and
-delivery to Codex are separate integration work.
+and receipt recovery. Actual machine reboot and extended unattended operation
+remain untested. Codex delivery has its own checks and operating bounds.

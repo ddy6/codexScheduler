@@ -239,19 +239,7 @@ class Harness:
                 and params.get("threadId") == self.trial.state["thread_id"]
                 and params.get("turnId") == self.initial_turn
                 and params.get("arguments") == {}):
-            self.trial.reserve("job")
-            self.job_log = (self.trial.directory / "job.log").open("w")
-            command = [
-                sys.executable, str(Path(__file__).with_name("synthetic_job.py")),
-                "--release", str(self.trial.directory / "release"),
-                "--timeout", str(self.timeout),
-            ]
-            self.trial.write(job_command=command, job_started_at=now())
-            self.job = subprocess.Popen(
-                command, cwd=self.trial.directory / "workspace",
-                stdout=self.job_log, stderr=subprocess.STDOUT,
-            )
-            self.trial.write(phase="job_running", job_pid=self.job.pid)
+            self.start_job()
             rpc.send({"id": request["id"], "result": {
                 "success": True,
                 "contentItems": [{"type": "inputText", "text": json.dumps({
@@ -265,6 +253,57 @@ class Harness:
             "code": -32000, "message": "Trial stopped: operator input required",
         }})
         raise TrialError(f"Operator input required for {request['method']}")
+
+    def before_initial_turn(self, configuration):
+        pass
+
+    def start_job(self):
+        self.trial.reserve("job")
+        self.job_log = (self.trial.directory / "job.log").open("w")
+        command = [
+            sys.executable, str(Path(__file__).with_name("synthetic_job.py")),
+            "--release", str(self.trial.directory / "release"), "--timeout", str(self.timeout),
+        ]
+        self.trial.write(job_command=command, job_started_at=now())
+        self.job = subprocess.Popen(command, cwd=self.trial.directory / "workspace",
+                                    stdout=self.job_log, stderr=subprocess.STDOUT)
+        self.trial.write(phase="job_running", job_pid=self.job.pid)
+
+    def finish_job(self):
+        code = self.job.wait(timeout=self.timeout)
+        self.job_log.close()
+        output = (self.trial.directory / "job.log").read_text()
+        if code != 0 or len(output) > 1024:
+            raise TrialError("Synthetic job failed; no continuation sent")
+        if json.loads(output) != {"result": 45, "status": "completed"}:
+            raise TrialError("Synthetic job produced unexpected evidence")
+        receipt = {"job_id": self.trial.state["job_id"], "exit_code": code,
+                   "result": 45, "completed_at": now()}
+        save(self.trial.directory / "completion.json", receipt)
+        return receipt
+
+    def deliver_completion(self, rpc, thread_id, receipt):
+        completion = json.dumps({"event": "job_completed", **receipt})
+        self.trial.reserve("continuation")
+        self.trial.write(completion_prompt=completion, dispatch_started_at=now())
+        if self.trial.state["transport"] == "queue":
+            result = subprocess.run(
+                [self.codex, "queue", "--remote", f"unix://{self.socket_path}",
+                 "--thread", thread_id, "--message", completion],
+                cwd=self.trial.directory / "workspace", capture_output=True, text=True, timeout=20,
+            )
+            (self.trial.directory / "queue.log").write_text(result.stdout + result.stderr)
+            if result.returncode:
+                raise TrialError("Queue delivery failed or is uncertain; inspect queue.log")
+            self.trial.write(phase="queue_accepted")
+            return rpc.completed_turn(thread_id)
+        result = rpc.call("turn/start", {"threadId": thread_id, "input": input_text(completion)})
+        return rpc.completed_turn(thread_id, result["turn"]["id"])
+
+    def cleanup_job(self):
+        stop(self.job)
+        if self.job_log and not self.job_log.closed:
+            self.job_log.close()
 
     def run(self, preflight_only=False):
         from websockets.sync.client import unix_connect
@@ -285,6 +324,7 @@ class Harness:
         self.trial.write(initial_prompt=initial_prompt, phase="starting_server")
         with tempfile.TemporaryDirectory(prefix="sr-", dir="/tmp") as socket_dir:
             socket_path = Path(socket_dir) / "server.sock"
+            self.socket_path = socket_path
             with (directory / "server.log").open("a") as server_log:
                 try:
                     command = [self.codex, "app-server", "--listen", f"unix://{socket_path}"]
@@ -342,6 +382,7 @@ class Harness:
                         effective_approval_policy=result["approvalPolicy"],
                         phase="starting_initial_turn",
                     )
+                    self.before_initial_turn(result)
                     result = rpc.call("turn/start", {
                         "threadId": thread_id, "input": input_text(initial_prompt),
                     })
@@ -353,43 +394,15 @@ class Harness:
                     self.trial.write(phase="worker_yielded", initial_turn_completed_at=now(),
                                      job_survived_turn=True)
                     (directory / "release").touch(exist_ok=False)
-                    code = self.job.wait(timeout=self.timeout)
-                    self.job_log.close()
-                    output = (directory / "job.log").read_text()
-                    if code != 0 or len(output) > 1024:
-                        raise TrialError("Synthetic job failed; no continuation sent")
-                    if json.loads(output) != {"result": 45, "status": "completed"}:
-                        raise TrialError("Synthetic job produced unexpected evidence")
-                    receipt = {"job_id": self.trial.state["job_id"],
-                               "exit_code": code, "result": 45, "completed_at": now()}
-                    save(directory / "completion.json", receipt)
+                    receipt = self.finish_job()
                     self.trial.write(phase="job_completed")
-                    completion = json.dumps({"event": "job_completed", **receipt})
-                    # Reserve before delivery. No fallback or retry after an uncertain send.
-                    self.trial.reserve("continuation")
-                    self.trial.write(completion_prompt=completion, dispatch_started_at=now())
-                    if self.trial.state["transport"] == "queue":
-                        result = subprocess.run(
-                            [self.codex, "queue", "--remote", f"unix://{socket_path}",
-                             "--thread", thread_id, "--message", completion],
-                            cwd=workspace, capture_output=True, text=True, timeout=20,
-                        )
-                        (directory / "queue.log").write_text(result.stdout + result.stderr)
-                        if result.returncode:
-                            raise TrialError("Queue delivery failed or is uncertain; inspect queue.log")
-                        self.trial.write(phase="queue_accepted")
-                        completed = rpc.completed_turn(thread_id)
-                    else:
-                        result = rpc.call("turn/start", {
-                            "threadId": thread_id, "input": input_text(completion),
-                        })
-                        completed = rpc.completed_turn(thread_id, result["turn"]["id"])
+                    completed = self.deliver_completion(rpc, thread_id, receipt)
                     items = rpc.call("thread/items/list", {
                         "threadId": thread_id, "turnId": completed["id"], "limit": 100,
                     })
                     if items.get("nextCursor"):
                         raise TrialError("Unexpectedly large completion turn")
-                    expected = f"CONTINUED:{self.token}:{receipt['job_id']}:{code}"
+                    expected = f"CONTINUED:{self.token}:{receipt['job_id']}:{receipt['exit_code']}"
                     verify_completion(items["data"], expected)
                     metadata = rpc.call("thread/read", {"threadId": thread_id})["thread"]
                     if metadata["status"]["type"] != "idle":
@@ -407,9 +420,7 @@ class Harness:
                         save(directory / "events.json", rpc.history)
                         rpc.close()
                     stop(server)
-                    stop(self.job)
-                    if self.job_log and not self.job_log.closed:
-                        self.job_log.close()
+                    self.cleanup_job()
 
 
 def main():

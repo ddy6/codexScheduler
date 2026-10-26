@@ -1,2 +1,2 @@
-# Local WebSocket transport for the lifecycle experiment.
+# Local WebSocket transport for Codex delivery and the lifecycle experiment.
 websockets>=15,<18

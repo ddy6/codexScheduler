@@ -16,8 +16,10 @@ from the source checkout; there is no installable scheduler or skill yet.
 A [worker lifecycle experiment](docs/worker-lifecycle.md) tests completion delivery
 to a dedicated worker thread. The first local trial passed: the worker yielded,
 received one queued completion, retained context, and returned to idle.
-The runner and worker experiment are separate for now; automatic delivery is the
-next slice.
+[Bounded completion delivery](docs/completion-delivery.md) now connects the runner
+to a dedicated worker with persistent allowances, revocation, and reconciliation.
+All 75 offline checks and the integrated live trial passed. The trial used one
+job, one continuation, and two status checks, then stopped with the worker idle.
 
 ## Design
 

@@ -42,7 +42,36 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_active_job_per_workspace ON jobs(workspace_id)
     WHERE state IN ('registered','launching','running','unknown');
-PRAGMA user_version = 1;
+"""
+
+DELIVERY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS continuation_grants (
+    grant_id TEXT PRIMARY KEY REFERENCES grants(id),
+    spec TEXT NOT NULL,
+    consumed_continuations INTEGER NOT NULL DEFAULT 0 CHECK(consumed_continuations >= 0),
+    consumed_checks INTEGER NOT NULL DEFAULT 0 CHECK(consumed_checks >= 0),
+    revoked_at TEXT
+);
+CREATE TABLE IF NOT EXISTS deliveries (
+    event_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id),
+    grant_id TEXT NOT NULL REFERENCES grants(id),
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+    worker_thread TEXT NOT NULL,
+    instructions TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN
+        ('pending','dispatching','uncertain','started','completed','failed','blocked','revoked')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts IN (0, 1)),
+    request_text TEXT,
+    receipt_hash TEXT,
+    turn_id TEXT,
+    reason TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_delivery_per_worker ON deliveries(worker_thread)
+    WHERE state IN ('pending','dispatching','uncertain','started','blocked');
+CREATE UNIQUE INDEX IF NOT EXISTS one_delivery_per_workspace ON deliveries(workspace_id)
+    WHERE state IN ('pending','dispatching','uncertain','started','blocked');
 """
 
 TERMINAL = {"succeeded", "failed", "timed_out", "output_limit"}
@@ -69,14 +98,17 @@ class Registry:
             (self.root / "jobs").mkdir(exist_ok=True, mode=0o700)
             with closing(sqlite3.connect(self.database)) as connection:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (0, 1):
+                if version not in (0, 1, 2):
                     raise SchedulerError("Unsupported registry version")
-                connection.executescript(SCHEMA)
+                if version < 2:
+                    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + DELIVERY_SCHEMA
+                                             + "PRAGMA user_version = 2;\nCOMMIT;")
             self.database.chmod(0o600)
         if not self.database.is_file():
             raise SchedulerError("Registry does not exist; create an explicit task grant first")
         with self.connect() as connection:
-            if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
+            self.version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if self.version not in (1, 2):
                 raise SchedulerError("Unsupported registry version")
 
     @contextmanager
@@ -166,6 +198,12 @@ class Registry:
         registration["registration_hash"] = hashlib.sha256(canonical(registration).encode()).hexdigest()
         try:
             with self.connect(write=True) as connection:
+                if self.version >= 2 and connection.execute(
+                    "SELECT 1 FROM deliveries WHERE workspace_id = ? "
+                    "AND state IN ('pending','dispatching','uncertain','started','blocked')",
+                    (grant["workspace_id"],),
+                ).fetchone():
+                    raise SchedulerError("Workspace has a pending or unresolved continuation")
                 row = connection.execute("SELECT consumed_jobs FROM grants WHERE id = ?", (grant_id,)).fetchone()
                 if row["consumed_jobs"] >= grant["max_jobs"]:
                     raise SchedulerError("Task launch allowance exhausted")

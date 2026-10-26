@@ -1,0 +1,2 @@
+# Local WebSocket transport for the lifecycle experiment.
+websockets>=15,<18

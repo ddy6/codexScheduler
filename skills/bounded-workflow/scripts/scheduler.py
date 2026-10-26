@@ -1,4 +1,4 @@
-"""Reach a trusted Codex Scheduler checkout without copying it into a project."""
+"""Use the installed Codex Scheduler or an explicitly selected source checkout."""
 
 import argparse
 import os
@@ -19,13 +19,17 @@ def main(argv=None):
             return 0
         parser.error("Separate launcher options and runtime arguments with --")
     args = parser.parse_args(argv[:split])
-    if args.runtime is None:
-        parser.error("Supply --runtime or CODEX_SCHEDULER_ROOT")
-    root = Path(args.runtime).resolve()
-    if not (root / "codex_scheduler" / "__main__.py").is_file():
-        parser.error("Runtime checkout must contain codex_scheduler/__main__.py")
-    sys.path.insert(0, str(root))
-    from codex_scheduler.__main__ import main as scheduler_main
+    if args.runtime is not None:
+        root = Path(args.runtime).resolve()
+        if not (root / "codex_scheduler" / "__main__.py").is_file():
+            parser.error("Runtime checkout must contain codex_scheduler/__main__.py")
+        sys.path.insert(0, str(root))
+    try:
+        from codex_scheduler.__main__ import main as scheduler_main
+    except ModuleNotFoundError as error:
+        if error.name == "codex_scheduler":
+            parser.error("Install codex-scheduler in this Python environment or supply --runtime")
+        raise
 
     return scheduler_main(argv[split + 1:])
 

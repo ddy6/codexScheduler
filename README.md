@@ -8,24 +8,54 @@ The workflow separates the user conversation from a persistent engineering
 worker. Ordinary code tracks jobs and delivers completion events to that worker.
 The worker keeps engineering context and judgment; the scheduler handles waiting.
 
+## Install
+
+Python 3.11 or newer and a POSIX host are required. The offline suite passes on
+macOS with Python 3.11 and 3.14. Windows is unsupported. Install from a trusted checkout:
+
+```sh
+git clone https://github.com/ddy6/codexScheduler.git
+cd codexScheduler
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ".[codex]"
+codex-scheduler --version
+```
+
+Use `pip install .` if you only need the local runner. The `codex` extra adds the
+WebSocket client for completion delivery; a signed-in local Codex CLI and a
+dedicated worker are separate requirements.
+
+In another project, export a profile and review its command and bounds:
+
+```sh
+codex-scheduler export-profile scheduler.toml
+codex-scheduler --project scheduler.toml project-info
+```
+
+The [quick start](docs/install.md) runs an offline example. To make the skill
+available across local Codex projects:
+
+```sh
+codex-scheduler export-skill ~/.agents/skills/bounded-workflow
+```
+
+Exports refuse existing destinations. Reading a profile or discovering the skill
+does not create a grant or activate continuation.
+
 ## Status
 
-Early development. A [local job runner](docs/job-runner.md) now registers commands,
-enforces runtime and log limits, and reconciles durable completion records. It runs
-from the source checkout.
-A [worker lifecycle experiment](docs/worker-lifecycle.md) tests completion delivery
-to a dedicated worker thread. The first local trial passed: the worker yielded,
-received one queued completion, retained context, and returned to idle.
-[Bounded completion delivery](docs/completion-delivery.md) now connects the runner
-to a dedicated worker with persistent allowances, revocation, and reconciliation.
-The integrated live trial passed. It used one
-job, one continuation, and two status checks, then stopped with the worker idle.
+This is a local alpha. The runner has durable grants, runtime/log limits, receipt
+recovery, and bounded completion delivery. One integrated live trial completed a
+job and resumed the same dedicated worker once, retaining context and stopping
+at idle. Worker provisioning is still separate; native child agents, machine
+reboot, long unattended runs, and competing interactive writers are unverified.
 
-The [bounded-workflow skill](skills/bounded-workflow/SKILL.md) adds project setup
-and handoff guidance. Its [usage guide](skills/bounded-workflow/references/usage.md)
-explains how to use one runtime across projects with separate commands, bounds,
-and local state. Profile inspection does not start work or authorize continuation.
-Package installation and plugin distribution are still to come.
+- [Skill and project setup](skills/bounded-workflow/references/usage.md)
+- [CLI reference](docs/cli.md)
+- [Completion, stopping, and recovery](docs/completion-delivery.md)
+- [Architecture](docs/architecture.md)
+- [Release checks and evidence](docs/release.md)
 
 ## Design
 
@@ -41,6 +71,16 @@ engineering verification, with one engineering writer per workspace.
 
 ## Development
 
+```sh
+python -m pip install -r requirements-dev.txt -r requirements-prototype.txt
+python -m unittest discover -s tests -v
+python -m tools.verify_release --work-dir state/release-check-001
+```
+
+The release check builds and audits a wheel and source archive, then exercises
+fresh base and Codex-extra installations. Its optional dependency download needs
+network access. It does not start a Codex server or invoke a model.
+
 Use synthetic jobs and disposable workspaces for integration checks. Changes to
 job state, delivery, or recovery need focused tests, including interrupted and
 duplicate delivery cases. Broader checks belong at meaningful checkpoints.
@@ -52,3 +92,7 @@ local development plans and agent guidance are ignored by Git.
 
 The local path is tested on macOS. Fewer manual polls is the intended benefit;
 any reduction in model usage still needs to be measured.
+
+## License
+
+MIT. Copyright 2026 Looptimum (ddy6). See [LICENSE](LICENSE).

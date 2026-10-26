@@ -1,0 +1,14 @@
+include LICENSE README.md pyproject.toml MANIFEST.in
+include requirements-dev.txt requirements-prototype.txt
+recursive-include codex_scheduler *.py
+recursive-include skills/bounded-workflow *.md *.yaml *.py
+include examples/project.toml
+recursive-include docs *.md
+recursive-include prototypes *.py
+recursive-include tests test_*.py
+recursive-include tools *.py
+prune docs/dev
+prune docs/internal
+prune docs/guidance
+global-exclude AGENTS.md AGENTS.local.md AGENTS.override.md dev_plan.md dev_notes.md
+global-exclude *.py[cod] .DS_Store

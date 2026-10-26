@@ -19,8 +19,10 @@ requested task. If automatic continuation has not been authorized, prepare the
 setup and keep the existing manual workflow.
 
 For setup, installation, or CLI syntax, read [the usage guide](references/usage.md).
-Use [the bundled launcher](scripts/scheduler.py) to reach one trusted runtime
-checkout from any project. It does not install software or activate anything.
+Prefer the installed `codex-scheduler` command in the selected environment.
+[The bundled launcher](scripts/scheduler.py) can use that installed runtime or
+an explicitly selected trusted source checkout. It does not install software or
+activate anything.
 
 Before scheduling, establish the exact dedicated worker thread, its workspace,
 local Unix socket, and approved permission snapshot. Prefer a controller-owned

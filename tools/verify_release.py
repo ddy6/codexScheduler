@@ -198,8 +198,15 @@ class Verification:
         policy = json.loads(self.command("verify-no-consumed-continuation", [*prefix, "delivery-policy", "--grant", grant["grant_id"]], cwd=project))
         if delivery["state"] != "revoked" or policy["consumed_continuations"] or policy["consumed_checks"]:
             raise RuntimeError("Revoked fixture attempted worker contact")
+        progress = json.loads(self.command("verify-revoked-progress-capture", [*prefix, "observe-progress",
+                              "--grant", grant["grant_id"], "--job", job["job_id"]], cwd=project))
+        if (progress["observer_state"] != "revoked" or progress["received_events"]
+                or progress["job"]["observed_state"] != "succeeded"
+                or not Path(progress["markdown_path"]).is_file()):
+            raise RuntimeError("Installed progress capture failed its revoked, offline fixture")
         self.report["offline_fixture"] = {"jobs": 1, "outcome": status["observed_state"],
-                                          "model_calls": 0, "continuations": 0, "revocation": "passed"}
+                                          "model_calls": 0, "continuations": 0, "revocation": "passed",
+                                          "progress_capture": "revoked_without_contact"}
         wheelhouse = self.work / "wheelhouse"
         self.command("download-optional-transport", [str(python), "-I", "-m", "pip", "download", "--only-binary=:all:",
                      "--no-deps", "--dest", str(wheelhouse), "websockets>=15,<18"])

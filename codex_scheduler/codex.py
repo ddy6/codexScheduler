@@ -16,11 +16,12 @@ class CodexAdapter:
             raise SchedulerError("Install the optional WebSocket transport before running delivery") from error
         return unix_connect
 
-    def __init__(self, spec, *, timeout=5):
+    def __init__(self, spec, *, timeout=5, on_notification=None):
         self.spec = spec
         self.timeout = timeout
         self.connection = None
         self.sequence = 0
+        self.on_notification = on_notification
 
     def __enter__(self):
         unix_connect = self.require_available()
@@ -54,11 +55,25 @@ class CodexAdapter:
             if "method" in message and "id" in message:
                 # Do not grant approval, answer user questions, or execute dynamic tools.
                 raise NeedsOperator("Codex requires operator input: " + message["method"])
+            if "method" in message and self.on_notification:
+                self.on_notification(message)
             if message.get("id") == request_id:
                 if "error" in message:
                     raise SchedulerError("Codex rejected " + method)
                 return message["result"]
         raise SchedulerError("Codex RPC notification allowance exhausted")
+
+    def read_notification(self, *, timeout):
+        """Receive existing events; never send a prompt or answer a server request."""
+        try:
+            message = json.loads(self.connection.recv(timeout=timeout))
+        except TimeoutError:
+            return False
+        if "method" in message and "id" in message:
+            raise NeedsOperator("Codex requires operator input")
+        if "method" in message and self.on_notification:
+            self.on_notification(message)
+        return True
 
     def snapshot(self, thread_id):
         # Omit all overrides: resume must retain the worker's existing permissions.

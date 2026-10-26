@@ -1,6 +1,7 @@
 """Codex Scheduler: record and run bounded local jobs."""
 
 import argparse
+from contextlib import nullcontext
 import json
 from pathlib import Path
 import sqlite3
@@ -50,6 +51,14 @@ def main(argv=None):
         command.add_argument("--job", required=True)
         if name in {"watch", "run"}:
             command.add_argument("--interval", type=float, default=2)
+            command.add_argument("--progress", action="store_true", help="Capture existing worker events without model calls")
+            command.add_argument("--progress-duration", type=float, default=900)
+            command.add_argument("--progress-max-events", type=int, default=10000)
+    observe = commands.add_parser("observe-progress", help="Capture an exact worker's existing events; never start a turn")
+    observe.add_argument("--grant", required=True)
+    observe.add_argument("--job", help="Optional exact job to include in the snapshot")
+    observe.add_argument("--duration", type=float, default=900)
+    observe.add_argument("--max-events", type=int, default=10000)
     for name in ("revoke-delivery", "delivery-policy"):
         command = commands.add_parser(name)
         command.add_argument("--grant", required=True)
@@ -138,6 +147,12 @@ def main(argv=None):
                 result = store.policy(args.grant)
             elif args.action == "delivery-status":
                 result = store.event(args.job)
+            elif args.action == "observe-progress":
+                from .progress import ProgressObserver
+
+                observer = ProgressObserver(registry, args.grant, job_id=args.job, duration=args.duration,
+                                            max_events=args.max_events, adapter_factory=CodexAdapter)
+                result = {**observer.run(), **observer.locations()}
             else:
                 dispatcher = Dispatcher(registry, CodexAdapter)
                 if args.action == "run":
@@ -150,9 +165,21 @@ def main(argv=None):
                             or policy["consumed_continuations"] >= policy["spec"]["max_continuations"]
                             or policy["consumed_checks"] >= policy["spec"]["max_checks"]):
                         raise SchedulerError("run requires an armed, unused continuation allowance")
-                    launch(registry, args.job)
-                result = (dispatcher.watch(args.job, interval=args.interval) if args.action in {"watch", "run"}
-                          else dispatcher.step(args.job, reconcile_only=args.action == "reconcile-delivery"))
+                observer = None
+                if args.action in {"run", "watch"} and args.progress:
+                    from .progress import ProgressObserver
+
+                    event = store.event(args.job)
+                    observer = ProgressObserver(registry, event["grant_id"], job_id=args.job,
+                                                duration=args.progress_duration, max_events=args.progress_max_events,
+                                                adapter_factory=CodexAdapter)
+                with observer.background() if observer else nullcontext():
+                    if args.action == "run":
+                        launch(registry, args.job)
+                    result = (dispatcher.watch(args.job, interval=args.interval) if args.action in {"watch", "run"}
+                              else dispatcher.step(args.job, reconcile_only=args.action == "reconcile-delivery"))
+                if observer:
+                    result["progress"] = {**observer.locations(), "observer_state": observer.record["observer_state"]}
         print(json.dumps(result, indent=2))
         return 0
     except (SchedulerError, OSError, ValueError, sqlite3.Error) as error:

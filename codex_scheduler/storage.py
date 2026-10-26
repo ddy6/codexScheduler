@@ -18,11 +18,15 @@ def canonical(value):
 
 
 def atomic_json(path, value):
+    atomic_text(path, canonical(value) + "\n")
+
+
+def atomic_text(path, value):
     path = Path(path)
     descriptor, temporary = tempfile.mkstemp(prefix=".receipt-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(canonical(value) + "\n")
+            stream.write(value)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)

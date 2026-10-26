@@ -55,6 +55,7 @@ reboot, long unattended runs, and competing interactive writers are unverified.
 - [CLI reference](docs/cli.md)
 - [Completion, stopping, and recovery](docs/completion-delivery.md)
 - [Architecture](docs/architecture.md)
+- [Automatic progress capture](docs/progress.md)
 - [Release checks and evidence](docs/release.md)
 
 ## Design
@@ -68,6 +69,11 @@ Automatic continuation stays within an approved task and a finite allowance.
 Restarts must preserve consumed allowance. Ambiguous delivery, new permissions,
 or a decision outside the task stops for human review. The initial scope is local
 engineering verification, with one engineering writer per workspace.
+
+For a rolling local progress document, add `--progress` to `run` or `watch`.
+Ordinary code copies existing worker events and job evidence without another
+model call. The supervisor reads the snapshot when needed; reading or summarizing
+it in a model turn still uses tokens.
 
 ## Development
 

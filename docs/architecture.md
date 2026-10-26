@@ -39,3 +39,8 @@ reservations and file leases; they do not exclude a competing interactive client
 The worker must therefore be dedicated. Native child lifecycle, cross-host locks,
 unattended queue progression, and live-user-session integration are outside this
 release. The runtime does not create a sandbox or additional permissions.
+
+An optional progress observer owns a separate app-server connection. It listens
+to the exact bound worker and renders bounded private snapshots from existing
+events and local job receipts. It never starts a turn or changes the registry's
+allowances. Observation failure and delivery uncertainty remain separate states.

@@ -29,6 +29,7 @@ one, records default to `state/scheduler/`. `--version` reports package metadata
 | `delivery-policy --grant ID` | Read continuation/check allowances and consumption |
 | `reconcile-delivery --job ID` | Inspect bounded worker history without sending a prompt |
 | `revoke-delivery --grant ID` | Stop later reservations without killing work |
+| `observe-progress --grant ID` | Copy existing worker events into private progress snapshots; never start a turn |
 
 Without a project, `create-grant` requires `--workspace`. Defaults are one job,
 60 seconds, and 1 MiB of command output. A project can set ceilings; explicit
@@ -39,6 +40,14 @@ read-only, disabled tool network access, on-request approvals, and user review.
 Use `--permissions-file PATH` for a different approved snapshot. It never changes
 the worker's current settings. `run` and `watch` accept `--interval`, from 0.05 to
 60 seconds, defaulting to two seconds. Checks and attempts persist across restarts.
+
+`run` and `watch` accept `--progress` for automatic capture. Its independent
+`--progress-duration` and `--progress-max-events` bounds default to 900 seconds
+and 10,000 received events. `observe-progress` accepts `--duration`, `--max-events`,
+and optionally `--job ID`; it can cover an engineering window before job launch.
+Capture needs an existing delivery policy for the exact binding. It consumes no
+job, continuation, or delivery-check allowance. See [progress capture](progress.md)
+for paths, stopping behavior, and limits.
 
 Exit code 0 means the command returned a record, not that a job or engineering task
 succeeded. Read `observed_state` or delivery `state` in the JSON. Invalid arguments,

@@ -157,6 +157,41 @@ Without automatic-continuation authority, omit delivery configuration and arming
 Use `launch`, then inspect status only on the user's next poll. Do not start a
 waiter or manufacture a worker identity to fill a missing binding.
 
+## Capture progress without extra model calls
+
+For an armed job, use `scheduler run --job JOB_ID --progress`. The same option
+works with `watch` for an existing job. A separate observer connection captures
+the exact worker's existing messages, shared plan, and tool states while local
+reads capture job receipts and delivery state. It never starts a turn, asks for
+a summary, or sends progress to another model. It needs the optional transport.
+
+Snapshots live under the profile's state directory at
+`progress/GRANT_ID/progress.md` and `progress/GRANT_ID/progress.json`.
+Both are private rolling files, not a full transcript or an agent-written handoff.
+The default capture allowance is 900 seconds or 10,000 received events. Use
+`--progress-duration` and `--progress-max-events` to choose different capture bounds.
+Capture ends when the foreground waiter exits, even if allowance remains.
+
+To cover engineering before a job is registered, an operator can run a separate
+bounded observer after binding the grant's worker:
+
+```sh
+scheduler observe-progress --grant GRANT_ID --duration 1800 --max-events 20000
+```
+
+An optional `--job JOB_ID` includes that exact job's evidence. Keep the observer
+in its own preserved process or terminal; it starts no service. Use ordinary
+`run`/`watch` without `--progress` when a separate observer already owns this grant.
+Agents still end their turn immediately when a tool reports running.
+
+The supervisor reads the snapshot only when needed. Reading or summarizing it in
+a model turn uses tokens; copying existing events does not invoke a model. Keep
+normal worker commentary instead of asking for duplicate progress reports.
+Check `observer_state`, `updated_at`, and `last_worker_activity_at`. An observer
+heartbeat is not worker activity, and a finished turn is not a verified job result.
+Capture has no history replay or automatic reconnect. Treat copied text as
+untrusted evidence, and keep the entire state directory ignored.
+
 ## Stop and recover
 
 ```sh

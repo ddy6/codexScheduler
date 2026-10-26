@@ -248,6 +248,15 @@ class Dispatcher:
     def watch(self, job_id, *, interval=2):
         if not 0.05 <= interval <= 60:
             raise SchedulerError("Polling interval must be between 0.05 and 60 seconds")
+        event = self.store.event(job_id)
+        lease = self.registry.root / ("watcher-" + event["event_id"] + ".lock")
+        try:
+            with exclusive_lease(lease):
+                return self._watch(job_id, interval)
+        except BlockingIOError as error:
+            raise SchedulerError("Another waiter owns this completion event") from error
+
+    def _watch(self, job_id, interval):
         while True:
             result = self.step(job_id)
             if result["state"] not in {"pending", "started", "dispatching"}:

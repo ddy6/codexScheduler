@@ -1,0 +1,13 @@
+version = 1
+workspace = "."
+state_dir = ".codex-scheduler"
+
+[commands]
+verify = ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]
+
+[limits]
+max_jobs = 1
+timeout_seconds = 60
+max_log_bytes = 1048576
+max_continuations = 1
+max_checks = 120

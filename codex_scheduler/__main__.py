@@ -8,22 +8,26 @@ import sys
 
 from .registry import Registry, SchedulerError
 from .runner import launch
+from .project import DEFAULT_LIMITS, Project
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--state-dir", type=Path, default=Path("state/scheduler"))
+    location = parser.add_mutually_exclusive_group()
+    location.add_argument("--state-dir", type=Path)
+    location.add_argument("--project", type=Path, help="Explicit TOML profile; paths resolve from the profile")
     commands = parser.add_subparsers(dest="action", required=True)
     grant = commands.add_parser("create-grant", help="Record an explicit, bounded task authorization")
-    grant.add_argument("--workspace", type=Path, required=True)
+    grant.add_argument("--workspace", type=Path, help="Required without a project profile")
     grant.add_argument("--thread", required=True, help="Exact worker thread; never newest/last")
     grant.add_argument("--scope", required=True)
-    grant.add_argument("--max-jobs", type=int, default=1)
-    grant.add_argument("--timeout", type=float, default=60)
-    grant.add_argument("--max-log-bytes", type=int, default=1048576)
+    grant.add_argument("--max-jobs", type=int)
+    grant.add_argument("--timeout", type=float)
+    grant.add_argument("--max-log-bytes", type=int)
     register = commands.add_parser("register", help="Save a job before launching it")
     register.add_argument("--grant", required=True)
-    register.add_argument("command", nargs=argparse.REMAINDER)
+    register.add_argument("--command", help="Named command from the project profile")
+    register.add_argument("argv", nargs=argparse.REMAINDER)
     for name in ("launch", "status", "recover"):
         command = commands.add_parser(name)
         command.add_argument("--job", required=True)
@@ -33,30 +37,62 @@ def main(argv=None):
     configure = commands.add_parser("configure-delivery", help="Record a new, explicit continuation allowance")
     configure.add_argument("--grant", required=True)
     configure.add_argument("--socket", type=Path, required=True)
-    configure.add_argument("--max-continuations", type=int, default=1)
-    configure.add_argument("--max-checks", type=int, default=120)
+    configure.add_argument("--max-continuations", type=int)
+    configure.add_argument("--max-checks", type=int)
     configure.add_argument("--permissions-file", type=Path)
     arm = commands.add_parser("arm", help="Save continuation instructions before yielding")
     arm.add_argument("--job", required=True)
     arm.add_argument("--instructions", required=True)
-    for name in ("deliver", "reconcile-delivery", "delivery-status", "watch"):
+    for name in ("deliver", "reconcile-delivery", "delivery-status", "watch", "run"):
         command = commands.add_parser(name)
         command.add_argument("--job", required=True)
-        if name == "watch":
+        if name in {"watch", "run"}:
             command.add_argument("--interval", type=float, default=2)
     for name in ("revoke-delivery", "delivery-policy"):
         command = commands.add_parser(name)
         command.add_argument("--grant", required=True)
+    commands.add_parser("project-info", help="Inspect a profile without creating state or starting work")
     args = parser.parse_args(argv)
     try:
-        registry = Registry(args.state_dir, create=args.action in {"create-grant", "upgrade"})
+        project = Project.load(args.project) if args.project else None
+        if args.action == "project-info":
+            if project is None:
+                raise SchedulerError("project-info requires --project")
+            print(json.dumps(project.info(), indent=2))
+            return 0
+        state_dir = project.state_dir if project else args.state_dir or Path("state/scheduler")
+        # Resolve and validate project bounds before initializing any registry.
+        def bound(name, requested):
+            return project.limit(name, requested) if project else DEFAULT_LIMITS[name] if requested is None else requested
+
+        if args.action == "create-grant":
+            if project and args.workspace and args.workspace.resolve() != project.workspace:
+                raise SchedulerError("Explicit workspace disagrees with the project profile")
+            workspace = project.workspace if project else args.workspace
+            if workspace is None:
+                raise SchedulerError("create-grant requires --workspace or --project")
+            max_jobs = bound("max_jobs", args.max_jobs)
+            timeout = bound("timeout_seconds", args.timeout)
+            log_bytes = bound("max_log_bytes", args.max_log_bytes)
+        elif args.action == "configure-delivery":
+            continuations = bound("max_continuations", args.max_continuations)
+            checks = bound("max_checks", args.max_checks)
+        registry = Registry(state_dir, create=args.action in {"create-grant", "upgrade"})
+        if project and hasattr(args, "grant"):
+            project.check_grant(registry, args.grant)
+        if project and hasattr(args, "job"):
+            project.check_job(registry, args.job)
         if args.action == "create-grant":
             result = registry.create_grant(
-                workspace=args.workspace, worker_thread=args.thread, scope=args.scope,
-                max_jobs=args.max_jobs, timeout_seconds=args.timeout, max_log_bytes=args.max_log_bytes,
+                workspace=workspace, worker_thread=args.thread, scope=args.scope,
+                max_jobs=max_jobs, timeout_seconds=timeout, max_log_bytes=log_bytes,
             )
         elif args.action == "register":
-            command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+            if args.command:
+                if project is None or args.command not in project.commands or command:
+                    raise SchedulerError("Select one known project command or supply an explicit argv list")
+                command = project.commands[args.command]
             result = registry.register(args.grant, command)
         elif args.action == "launch":
             result = launch(registry, args.job)
@@ -82,8 +118,8 @@ def main(argv=None):
                         raise SchedulerError("Permissions snapshot exceeds 16 KiB")
                     permissions = json.loads(data)
                 result = store.configure(
-                    args.grant, socket_path=args.socket, max_continuations=args.max_continuations,
-                    max_checks=args.max_checks, permissions=permissions,
+                    args.grant, socket_path=args.socket, max_continuations=continuations,
+                    max_checks=checks, permissions=permissions,
                 )
             elif args.action == "arm":
                 result = store.arm(args.job, args.instructions)
@@ -95,7 +131,18 @@ def main(argv=None):
                 result = store.event(args.job)
             else:
                 dispatcher = Dispatcher(registry, CodexAdapter)
-                result = (dispatcher.watch(args.job, interval=args.interval) if args.action == "watch"
+                if args.action == "run":
+                    if not 0.05 <= args.interval <= 60:
+                        raise SchedulerError("Polling interval must be between 0.05 and 60 seconds")
+                    CodexAdapter.require_available()
+                    event = store.event(args.job)
+                    policy = store.policy(event["grant_id"])
+                    if (event["state"] != "pending" or event["attempts"] or policy["revoked_at"]
+                            or policy["consumed_continuations"] >= policy["spec"]["max_continuations"]
+                            or policy["consumed_checks"] >= policy["spec"]["max_checks"]):
+                        raise SchedulerError("run requires an armed, unused continuation allowance")
+                    launch(registry, args.job)
+                result = (dispatcher.watch(args.job, interval=args.interval) if args.action in {"watch", "run"}
                           else dispatcher.step(args.job, reconcile_only=args.action == "reconcile-delivery"))
         print(json.dumps(result, indent=2))
         return 0

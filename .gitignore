@@ -30,6 +30,7 @@ dev_notes.md
 /runs/
 /artifacts/
 /logs/
+.codex-scheduler/
 *.log
 *.pid
 *.pid.lock

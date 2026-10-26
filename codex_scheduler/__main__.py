@@ -9,10 +9,12 @@ import sys
 from .registry import Registry, SchedulerError
 from .runner import launch
 from .project import DEFAULT_LIMITS, Project
+from .assets import export_profile, export_skill, package_version
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--version", action="version", version="codex-scheduler " + package_version())
     location = parser.add_mutually_exclusive_group()
     location.add_argument("--state-dir", type=Path)
     location.add_argument("--project", type=Path, help="Explicit TOML profile; paths resolve from the profile")
@@ -52,8 +54,15 @@ def main(argv=None):
         command = commands.add_parser(name)
         command.add_argument("--grant", required=True)
     commands.add_parser("project-info", help="Inspect a profile without creating state or starting work")
+    for name in ("export-skill", "export-profile"):
+        command = commands.add_parser(name, help="Copy a bundled setup asset; refuse an existing destination")
+        command.add_argument("destination", type=Path)
     args = parser.parse_args(argv)
     try:
+        if args.action in {"export-skill", "export-profile"}:
+            result = export_skill(args.destination) if args.action == "export-skill" else export_profile(args.destination)
+            print(json.dumps(result, indent=2))
+            return 0
         project = Project.load(args.project) if args.project else None
         if args.action == "project-info":
             if project is None:

@@ -5,8 +5,9 @@ reserves an attempt before starting a wrapper, and saves a completion receipt.
 The base runner commands do not call Codex. [Completion delivery](completion-delivery.md)
 can separately be enabled for an explicitly bounded task.
 
-Run from the source checkout with Python 3.11 or newer on a POSIX host. The current
-checks run on macOS; Windows support and package installation come later. The core
+Use the installed `codex-scheduler` command or run from a source checkout with
+Python 3.11 or newer on a POSIX host. Current checks run on macOS; Windows is
+unsupported. The core
 uses the Python standard library. Optional Codex delivery and the worker experiment
 need the WebSocket dependency.
 

@@ -1,2 +1,5 @@
-# Used by the skill-creator validator; not a runtime dependency.
+# Build and validation tools; not runtime dependencies.
 PyYAML>=6,<7
+build>=1,<2
+setuptools>=77,<85
+wheel>=0.45,<1

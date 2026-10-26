@@ -1,20 +1,27 @@
 # Use the skill in another project
 
-The skill uses one trusted Codex Scheduler source checkout. Its bundled launcher
-adds that checkout to the current Python process without changing directories or
-copying runtime code into the project. Python 3.11 or newer and local POSIX process
-access are required. macOS is tested; Windows and hosted sessions without access
-to the local runtime are unsupported.
+The skill uses an installed Codex Scheduler runtime or one explicitly selected
+trusted source checkout. Its launcher never changes directories or copies runtime
+code into a project. Python 3.11 or newer and local POSIX process access are
+required. macOS is tested; Windows and hosted sessions without access to the local
+runtime are unsupported.
 
 ## Make the skill discoverable
 
 Keep the complete `bounded-workflow` folder, including `scripts/` and
-`references/`. For local Codex discovery, a user can copy or symlink it into
+`references/`. The installed runtime can export it for local discovery:
+
+```sh
+codex-scheduler export-skill ~/.agents/skills/bounded-workflow
+```
+
+The export refuses an existing destination and starts no work. A source-checkout
+user can instead copy or symlink the complete folder into
 `~/.agents/skills/bounded-workflow`. A project can instead use
 `.agents/skills/bounded-workflow`. Do not overwrite an existing skill installation.
 These steps make instructions available; they do not activate scheduling.
 
-For example, after choosing the destination:
+For example, from a source checkout:
 
 ```sh
 mkdir -p ~/.agents/skills
@@ -29,8 +36,9 @@ Discovery reference: [official skill documentation](https://learn.chatgpt.com/do
 
 ## Prepare a project profile
 
-Copy the runtime's `examples/project.toml` to `scheduler.toml` in the target
-project, or write a small profile suited to its verification command:
+Run `codex-scheduler export-profile scheduler.toml` in the target project, copy
+`examples/project.toml` from a checkout, or write a profile for its verification
+command. Exports refuse an existing file:
 
 ```toml
 version = 1
@@ -65,36 +73,38 @@ consumed capacity. Reading a profile creates no state and grants no authority.
 
 ## Reach the shared runtime
 
-Use the helper in the loaded skill directory:
+With the installed environment active, use the CLI directly from any project:
 
 ```sh
-python3 /path/to/bounded-workflow/scripts/scheduler.py \
-  --runtime /path/to/codex-scheduler -- \
+codex-scheduler --project /path/to/project/scheduler.toml project-info
+```
+
+The helper in the loaded skill also works with the installed package:
+
+```sh
+python3 /path/to/bounded-workflow/scripts/scheduler.py -- \
   --project /path/to/project/scheduler.toml project-info
 ```
 
-The `--` separates launcher options from runtime arguments. Everything afterward
-is passed to the runtime unchanged. The helper also accepts
-`CODEX_SCHEDULER_ROOT` instead of `--runtime`. Use an interpreter with the optional
-WebSocket dependency installed for automatic delivery. It is unnecessary for
-profile inspection and ordinary runner commands.
+The `--` separates launcher options from runtime arguments, which are passed
+unchanged. For an uninstalled source checkout, add `--runtime PATH` before that
+separator, or set `CODEX_SCHEDULER_ROOT`. An explicit checkout takes precedence;
+an invalid one is refused instead of silently selecting a different runtime.
+Use an interpreter with the `codex` extra for automatic delivery. It is unnecessary
+for profile inspection and ordinary runner commands.
 
 For repeated commands from a project's root, this optional shell function keeps
-examples short. Point the variable at the trusted checkout and create its virtual
-environment first if needed:
+examples short:
 
 ```sh
-export CODEX_SCHEDULER_ROOT=/path/to/codex-scheduler
 scheduler() {
-  "$CODEX_SCHEDULER_ROOT/.venv/bin/python" \
-    "$CODEX_SCHEDULER_ROOT/skills/bounded-workflow/scripts/scheduler.py" \
-    -- --project ./scheduler.toml "$@"
+  codex-scheduler --project ./scheduler.toml "$@"
 }
 scheduler project-info
 ```
 
-The following commands use that function. A Codex session can use the full helper
-path instead. The runtime is not installed as a `scheduler` executable yet.
+The following commands use that optional function, not an installed executable
+named `scheduler`. A Codex session can use the full CLI or helper prefix instead.
 
 ## Bind the worker and approved task
 
@@ -176,8 +186,13 @@ The same helper and runtime executed different verification commands in two
 disposable projects, from an unrelated working directory with spaces in its path.
 Each project kept separate state and rejected the other project's job identity.
 Profile inspection created no registry and neither profile activated delivery.
-All 93 offline tests and the skill-creator validator passed. The new one-call
+At the skill checkpoint, all 93 offline tests and the skill-creator validator
+passed. The one-call
 handoff ran a real local job with a simulated worker. The runner/dispatcher's live
 normal path was verified separately in the bounded worker trial. The skill's model
 selection and implicit activation have not been tested in a live Codex
 conversation; skill validation is structural.
+
+The repository's release check additionally tests wheel-installed asset exports
+and this helper from an unrelated project with no checkout path. The installed
+runtime does not provision a worker or activate scheduling by itself.

@@ -1,0 +1,2 @@
+# Used by the skill-creator validator; not a runtime dependency.
+PyYAML>=6,<7

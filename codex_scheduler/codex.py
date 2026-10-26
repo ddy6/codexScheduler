@@ -8,6 +8,14 @@ from .registry import SchedulerError
 
 
 class CodexAdapter:
+    @staticmethod
+    def require_available():
+        try:
+            from websockets.sync.client import unix_connect
+        except ImportError as error:
+            raise SchedulerError("Install the optional WebSocket transport before running delivery") from error
+        return unix_connect
+
     def __init__(self, spec, *, timeout=5):
         self.spec = spec
         self.timeout = timeout
@@ -15,8 +23,7 @@ class CodexAdapter:
         self.sequence = 0
 
     def __enter__(self):
-        from websockets.sync.client import unix_connect
-
+        unix_connect = self.require_available()
         self.connection = unix_connect(self.spec["socket_path"], open_timeout=self.timeout,
                                        close_timeout=1, max_size=1048576)
         try:

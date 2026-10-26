@@ -312,6 +312,15 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(self.worker.starts, [])
         self.assertEqual(self.policy()["consumed_checks"], 0)
 
+    def test_second_waiter_cannot_consume_checks_while_a_watcher_owns_the_event(self):
+        self.prepare()
+        event = self.store.event(self.job_id)
+        with exclusive_lease(self.registry.root / ("watcher-" + event["event_id"] + ".lock")):
+            with self.assertRaises(SchedulerError):
+                self.dispatcher.watch(self.job_id, interval=0.05)
+        self.assertEqual(self.worker.starts, [])
+        self.assertEqual(self.policy()["consumed_checks"], 0)
+
     def test_receipt_change_after_dispatch_blocks_reconciliation(self):
         self.prepare()
         self.dispatcher.step(self.job_id)

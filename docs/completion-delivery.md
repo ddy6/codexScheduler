@@ -23,7 +23,7 @@ approvals were retained. Dispatch through final verification took about 3.4
 seconds in this small trial; this is not a latency benchmark. The temporary server
 was closed afterward, with no installed service or running trial left behind.
 
-All 75 offline checks pass. Revocation, lost acknowledgements, crashes around
+At that checkpoint, all 75 offline checks passed. Revocation, lost acknowledgements, crashes around
 dispatch, exhausted budgets, and unavailable approvals were tested offline; this
 live trial covered the normal path. Actual reboot, extended idle periods, native
 child agents, and competing interactive writers remain untested. Runtime evidence
@@ -74,9 +74,12 @@ before launching and yielding:
 ```sh
 python3 -m codex_scheduler arm --job JOB_ID \
   --instructions "Read the receipt, report the verification result, and stop."
-python3 -m codex_scheduler launch --job JOB_ID
-python3 -m codex_scheduler watch --job JOB_ID --interval 2
+python3 -m codex_scheduler run --job JOB_ID --interval 2
 ```
+
+`run` launches the armed job and starts its bounded foreground waiter in the same
+execution call. An agent can yield as soon as the tool returns running. `watch`
+remains available to supervise an already launched job without relaunching it.
 
 `watch` checks local records while the job runs; it makes no model calls to ask
 for progress. Once the receipt is verified and the worker is idle, it reserves an

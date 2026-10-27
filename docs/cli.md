@@ -7,6 +7,11 @@ Choose `--project PROFILE` or `--state-dir DIRECTORY` before the subcommand. The
 are mutually exclusive. A profile supplies workspace paths and ceilings; without
 one, records default to `state/scheduler/`. `--version` reports package metadata.
 
+Global `--max-receive-bytes N` overrides the Codex transport bound for an invocation.
+The default is 8 MiB, with a finite allowed range of 1 KiB–64 MiB. Project ceilings
+apply to overrides. New delivery policies store their selected bound; overriding
+an existing policy does not change its allowances. See [response limits](response-limits.md).
+
 | Command | Purpose |
 | --- | --- |
 | `export-profile DESTINATION` | Copy the example TOML profile; refuse an existing file |
@@ -27,9 +32,10 @@ one, records default to `state/scheduler/`. `--version` reports package metadata
 | `deliver --job ID` | Perform one bounded controller tick |
 | `delivery-status --job ID` | Read the saved event without contacting Codex |
 | `delivery-policy --grant ID` | Read continuation/check allowances and consumption |
-| `reconcile-delivery --job ID` | Inspect bounded worker history without sending a prompt |
+| `reconcile-delivery --job ID` | Verify the acknowledged turn, or bounded discovery evidence, without sending a prompt |
 | `revoke-delivery --grant ID` | Stop later reservations without killing work |
 | `observe-progress --grant ID` | Copy existing worker events into private progress snapshots; never start a turn |
+| `usage-status --grant ID` | Read fresh quota percentages and reset metadata from the configured server |
 
 Without a project, `create-grant` requires `--workspace`. Defaults are one job,
 60 seconds, and 1 MiB of command output. A project can set ceilings; explicit
@@ -48,6 +54,12 @@ and optionally `--job ID`; it can cover an engineering window before job launch.
 Capture needs an existing delivery policy for the exact binding. It consumes no
 job, continuation, or delivery-check allowance. See [progress capture](progress.md)
 for paths, stopping behavior, and limits.
+
+`configure-delivery --max-usage-resumes N` authorizes up to N usage recoveries,
+defaulting to zero. Each also consumes a total continuation; both allowances must
+remain available. Profile ceilings apply. Schema 3 is required for recovery;
+`upgrade` preserves old counters and does not enable it. See [usage limits](usage-limits.md)
+for reset waiting, interruption status, and recovery scope.
 
 Exit code 0 means the command returned a record, not that a job or engineering task
 succeeded. Read `observed_state` or delivery `state` in the JSON. Invalid arguments,

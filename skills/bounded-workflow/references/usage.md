@@ -194,6 +194,25 @@ untrusted evidence, and keep the entire state directory ignored.
 
 ## Stop and recover
 
+Usage limits can leave an unfinished worker idle. Progress snapshots preserve
+`task_state: blocked_on_usage` across idle updates and capture restarts. A fresh
+`scheduler usage-status --grant GRANT_ID` reads percentages, window durations,
+and reset times without invoking a model. Missing data stays unknown; a reset
+timestamp is not proof of availability or completion.
+
+Automatic usage recovery defaults to zero. For a newly authorized task, a profile
+can allow `max_usage_resumes = 1` and `max_continuations = 2`; configure matching
+bounds with `configure-delivery --max-usage-resumes 1 --max-continuations 2`.
+Older registries need `upgrade`, which preserves counters and enables no recovery.
+Existing policies cannot be overwritten or replaced to refill allowance.
+
+Recovery covers confirmed usage failures in scheduler-owned continuation turns.
+The waiter can sleep until a reported reset without inference, then checks fresh
+quota, the exact failed turn, ownership, permissions, queue, and receipt. Each
+resume consumes a persisted recovery attempt and a total continuation before
+sending. Uncertain sends require reconciliation. Interruptions before a scheduled
+continuation remain supervisor handoffs; idle alone never authorizes another turn.
+
 ```sh
 scheduler status --job JOB_ID
 scheduler delivery-status --job JOB_ID
@@ -210,6 +229,16 @@ stale evidence is not success. Revocation stops future reservations without
 killing commands or interrupting already active turns. Exhausted checks,
 unavailable approval, changed permissions, and uncertain sends stop for operator
 review; they never refill budgets or trigger automatic retries.
+
+For `response_too_large`, distinguish worker verification from failure to confirm
+a sent turn. The default receive cap is 8 MiB. An invocation can use, for example,
+`codex-scheduler --project scheduler.toml --max-receive-bytes 16777216 reconcile-delivery --job JOB_ID`.
+The profile's `max_receive_bytes` ceiling must permit it; the absolute cap is
+64 MiB. This changes transport only, preserving the saved acknowledgement and all
+consumed allowance. Never replace the grant or resend to work around the failure.
+Confirmation reads status without items and verifies input within the acknowledged
+turn, avoiding unrelated full history. Unknown acknowledgements require bounded
+discovery; missing or truncated evidence remains unresolved.
 
 One armed or unresolved event owns its worker and workspace. Finish with a handoff
 before starting a successor. A completed delivery means the turn ended, not that

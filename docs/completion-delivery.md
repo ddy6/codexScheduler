@@ -93,12 +93,17 @@ record the acknowledged turn ID. The earlier experiment used the CLI queue.
 
 ## Bounds and stopping
 
-Each job has at most one event and one dispatch attempt. Continuation and check
+Each job has one completion event and one initial dispatch attempt. Explicit
+[usage recovery](usage-limits.md) may add separately reserved resume requests for
+confirmed quota failures, within both recovery and total continuation allowances.
+Other failures and uncertain sends never authorize another request. Continuation and check
 allowances belong to the task grant and persist across new jobs and controller
 restarts. Configuration cannot be overwritten to reset them. A check is one
-controller tick, including a bounded worker-history scan when needed. Each scan
-reads at most five pages of twenty turns; each RPC also has finite time and
-message limits. Local `delivery-status` and `delivery-policy` reads do not consume
+controller tick, including bounded confirmation reads when needed. Status pages
+omit items, and input verification reads only the acknowledged turn. Unknown
+acknowledgements use bounded discovery without unrelated full history. History
+reads have page, request, time, and [receive bounds](response-limits.md).
+Local `delivery-status` and `delivery-policy` reads do not consume
 checks or contact Codex.
 
 One armed or unresolved event reserves its worker and workspace until it closes.
@@ -149,8 +154,9 @@ transport error or a crash around dispatch can leave the outcome uncertain:
 python3 -m codex_scheduler reconcile-delivery --job JOB_ID
 ```
 
-Reconciliation never starts a turn. It searches bounded worker history for the
-exact saved event input and checks the acknowledged turn ID when one exists.
+Reconciliation never starts a turn. It verifies the exact saved input and status
+within the acknowledged turn, using lightweight status metadata and scoped item
+reads. Without an acknowledgement it searches bounded initial-input evidence.
 Missing, duplicated, truncated, or mixed-input evidence stays unresolved. Neither
 absence from a scan nor an unacknowledged send authorizes a second prompt. Starting
 `watch` again on a reserved event also reconciles it rather than resending.

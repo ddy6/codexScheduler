@@ -11,3 +11,5 @@ timeout_seconds = 60
 max_log_bytes = 1048576
 max_continuations = 1
 max_checks = 120
+max_usage_resumes = 0
+max_receive_bytes = 8388608

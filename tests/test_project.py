@@ -55,6 +55,47 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(Path(info["state_dir"]), self.root.resolve() / ".codex-scheduler")
         self.assertFalse((self.root / ".codex-scheduler").exists())
 
+    def test_usage_recovery_requires_profile_allowance_and_does_not_change_existing_policy(self):
+        grant = self.grant()
+        code, error = self.call("configure-delivery", "--grant", grant["grant_id"],
+                                "--socket", str(self.root / "worker.sock"), "--max-usage-resumes", "1")
+        self.assertEqual(code, 2)
+        self.assertIn("max_usage_resumes", error)
+        with self.profile.open("a") as stream:
+            stream.write("\n[limits]\nmax_continuations = 2\nmax_usage_resumes = 1\n")
+        code, policy = self.call("configure-delivery", "--grant", grant["grant_id"],
+                                 "--socket", str(self.root / "worker.sock"), "--max-usage-resumes", "1")
+        self.assertEqual(code, 0)
+        self.assertEqual(policy["spec"]["max_usage_resumes"], 1)
+        self.profile.write_text("version = 1\n")
+        code, original = self.call("delivery-policy", "--grant", grant["grant_id"])
+        self.assertEqual(code, 0)
+        self.assertEqual(original["spec"]["max_usage_resumes"], 1)
+
+    def test_receive_override_obeys_profile_ceiling_without_rewriting_the_policy(self):
+        grant = self.grant()
+        code, policy = self.call("configure-delivery", "--grant", grant["grant_id"], "--socket", str(self.root / "worker.sock"))
+        self.assertEqual(code, 0)
+        self.assertEqual(policy["spec"]["max_receive_bytes"], 8 * 1024 * 1024)
+        with patch("codex_scheduler.codex.CodexAdapter") as factory:
+            code, error = self.call("--max-receive-bytes", str(16 * 1024 * 1024), "usage-status", "--grant", grant["grant_id"])
+            self.assertEqual(code, 2)
+            self.assertIn("max_receive_bytes", error)
+            factory.assert_not_called()
+        with self.profile.open("a") as stream:
+            stream.write("\n[limits]\nmax_receive_bytes = 16777216\n")
+        worker = MagicMock()
+        worker.__enter__.return_value = worker
+        worker.rate_limits.return_value = {}
+        with patch("codex_scheduler.codex.CodexAdapter", return_value=worker) as factory:
+            code, _ = self.call("--max-receive-bytes", str(16 * 1024 * 1024), "usage-status", "--grant", grant["grant_id"])
+        self.assertEqual(code, 0)
+        self.assertEqual(factory.call_args.args[0]["max_receive_bytes"], 16 * 1024 * 1024)
+        code, unchanged = self.call("delivery-policy", "--grant", grant["grant_id"])
+        self.assertEqual(unchanged["spec"]["max_receive_bytes"], 8 * 1024 * 1024)
+        self.assertEqual(unchanged["consumed_continuations"], 0)
+        self.assertEqual(unchanged["consumed_checks"], 0)
+
     def test_invalid_profiles_are_rejected_before_state_creation(self):
         invalid = [
             'version = true\n', 'version = 2\n', 'version = 1\nautomatic = true\n',

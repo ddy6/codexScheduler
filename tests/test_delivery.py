@@ -358,7 +358,7 @@ class DeliveryTests(unittest.TestCase):
         with self.assertRaises(SchedulerError):
             DeliveryStore(old)
         updated = Registry(self.registry.root, create=True)
-        self.assertEqual(updated.version, 2)
+        self.assertEqual(updated.version, 3)
         self.assertEqual(updated.grant(grant["grant_id"])["consumed_jobs"], 1)
         with self.assertRaises(SchedulerError):
             DeliveryStore(updated).policy(grant["grant_id"])
@@ -390,23 +390,27 @@ class AdapterTests(unittest.TestCase):
 
     def turn(self, turn_id="turn", text="exact event"):
         return {"id": turn_id, "status": "completed", "itemsView": "full", "items": [
-            {"type": "userMessage", "content": [{"type": "text", "text": text}]},
+            {"id": "user-" + turn_id, "type": "userMessage", "content": [{"type": "text", "text": text}]},
         ]}
 
     def test_history_matches_exact_event_input_across_pages(self):
         adapter, calls = self.adapter_with_pages([
             {"data": [self.turn("other", "unrelated")], "nextCursor": "page2"},
+            {"data": [{"turnId": "other", "item": self.turn("other", "unrelated")["items"][0]}]},
             {"data": [self.turn()], "nextCursor": None},
+            {"data": [{"turnId": "turn", "item": self.turn()["items"][0]}]},
         ])
         self.assertEqual(adapter.find_event(self.event()), [{"id": "turn", "status": "completed"}])
-        self.assertEqual(calls[1][1]["cursor"], "page2")
+        self.assertEqual(calls[2][1]["cursor"], "page2")
+        self.assertEqual(calls[0][1]["itemsView"], "notLoaded")
 
     def test_history_that_mixes_user_input_is_not_accepted_as_an_owned_turn(self):
         turn = self.turn()
-        turn["items"].append({"type": "userMessage", "content": [{"type": "text", "text": "another user"}]})
-        adapter, _ = self.adapter_with_pages([{"data": [turn]}])
+        turn["items"].append({"id": "another-user", "type": "userMessage", "content": [{"type": "text", "text": "another user"}]})
+        adapter, _ = self.adapter_with_pages([{"data": [turn]},
+            {"data": [{"turnId": "turn", "item": item} for item in turn["items"]]}])
         with self.assertRaises(NeedsOperator):
-            adapter.find_event(self.event())
+            adapter.find_event({**self.event(), "turn_id": "turn"})
 
     def test_truncated_history_stops_at_the_page_budget(self):
         adapter, calls = self.adapter_with_pages([{"data": [], "nextCursor": "more"}] * 5)

@@ -76,6 +76,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_delivery_per_workspace ON deliveries(works
 
 TERMINAL = {"succeeded", "failed", "timed_out", "output_limit"}
 
+USAGE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS usage_waits (
+    job_id TEXT PRIMARY KEY REFERENCES jobs(id),
+    source_turn_id TEXT NOT NULL,
+    quota TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS usage_resumes (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    job_id TEXT NOT NULL REFERENCES jobs(id),
+    grant_id TEXT NOT NULL REFERENCES grants(id),
+    source_turn_id TEXT NOT NULL,
+    request_text TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('dispatching','started','uncertain','completed','failed')),
+    turn_id TEXT,
+    UNIQUE(job_id, source_turn_id)
+);
+"""
+
 
 def identity(value):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{32}", value):
@@ -98,17 +118,17 @@ class Registry:
             (self.root / "jobs").mkdir(exist_ok=True, mode=0o700)
             with closing(sqlite3.connect(self.database)) as connection:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version not in (0, 1, 2):
+                if version not in (0, 1, 2, 3):
                     raise SchedulerError("Unsupported registry version")
-                if version < 2:
-                    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + DELIVERY_SCHEMA
-                                             + "PRAGMA user_version = 2;\nCOMMIT;")
+                if version < 3:
+                    connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + DELIVERY_SCHEMA + USAGE_SCHEMA
+                                             + "PRAGMA user_version = 3;\nCOMMIT;")
             self.database.chmod(0o600)
         if not self.database.is_file():
             raise SchedulerError("Registry does not exist; create an explicit task grant first")
         with self.connect() as connection:
             self.version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if self.version not in (1, 2):
+            if self.version not in (1, 2, 3):
                 raise SchedulerError("Unsupported registry version")
 
     @contextmanager

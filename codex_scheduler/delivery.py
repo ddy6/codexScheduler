@@ -9,6 +9,8 @@ import uuid
 
 from .registry import SchedulerError, TERMINAL, identity, nonempty
 from .storage import canonical, exclusive_lease, utc_now
+from .usage import read_quota
+from .transport import DEFAULT_RECEIVE_BYTES, ResponseTooLarge, receive_limit
 
 
 OPEN = {"pending", "dispatching", "uncertain", "started", "blocked"}
@@ -30,13 +32,18 @@ class DeliveryStore:
             raise SchedulerError("Upgrade this registry before configuring delivery")
 
     def configure(self, grant_id, *, socket_path, max_continuations=1, max_checks=120,
-                  permissions=None):
+                  permissions=None, max_usage_resumes=0, max_receive_bytes=DEFAULT_RECEIVE_BYTES):
         grant = self.registry.grant(grant_id)
+        receive_limit(max_receive_bytes)
         socket_path = Path(socket_path).resolve()
         if type(max_continuations) is not int or not 1 <= max_continuations <= 1000:
             raise SchedulerError("max_continuations must be between 1 and 1000")
         if type(max_checks) is not int or not 1 <= max_checks <= 10000:
             raise SchedulerError("max_checks must be between 1 and 10000")
+        if type(max_usage_resumes) is not int or not 0 <= max_usage_resumes <= 100:
+            raise SchedulerError("max_usage_resumes must be between 0 and 100")
+        if max_usage_resumes and self.registry.version < 3:
+            raise SchedulerError("Upgrade this registry before authorizing usage recovery")
         permissions = DEFAULT_PERMISSIONS if permissions is None else permissions
         if (not isinstance(permissions, dict) or not isinstance(permissions.get("sandbox"), dict)
                 or not {"approvalPolicy", "approvalsReviewer"} <= permissions.keys()
@@ -47,6 +54,8 @@ class DeliveryStore:
             "socket_path": str(socket_path), "max_continuations": max_continuations,
             "max_checks": max_checks, "permissions": permissions, "created_at": utc_now(),
             "worker_thread": grant["worker_thread"], "workspace": grant["workspace"],
+            "max_usage_resumes": max_usage_resumes,
+            "max_receive_bytes": max_receive_bytes,
         }
         try:
             with self.registry.connect(write=True) as connection:
@@ -60,9 +69,11 @@ class DeliveryStore:
         with self.registry.connect() as connection:
             row = connection.execute("SELECT * FROM continuation_grants WHERE grant_id = ?",
                                      (identity(grant_id),)).fetchone()
+            used = (connection.execute("SELECT COUNT(*) FROM usage_resumes WHERE grant_id = ?", (grant_id,)).fetchone()[0]
+                    if self.registry.version >= 3 else 0)
         if row is None:
             raise SchedulerError("Grant has no automatic-continuation allowance")
-        return {**dict(row), "spec": json.loads(row["spec"])}
+        return {**dict(row), "spec": json.loads(row["spec"]), "consumed_usage_resumes": used}
 
     def arm(self, job_id, instructions):
         nonempty(instructions, "Continuation instructions")
@@ -94,7 +105,64 @@ class DeliveryStore:
             row = connection.execute("SELECT * FROM deliveries WHERE job_id = ?", (identity(job_id),)).fetchone()
         if row is None:
             raise SchedulerError("Job is not armed for continuation")
-        return dict(row)
+        result = dict(row)
+        if self.registry.version >= 3:
+            with self.registry.connect() as connection:
+                wait = connection.execute("SELECT * FROM usage_waits WHERE job_id = ?", (job_id,)).fetchone()
+                resume = connection.execute("SELECT * FROM usage_resumes WHERE job_id = ? ORDER BY sequence DESC LIMIT 1",
+                                            (job_id,)).fetchone()
+            if wait:
+                result["usage"] = {**dict(wait), "quota": json.loads(wait["quota"]),
+                                   "resume": dict(resume) if resume else None,
+                                   "state": "blocked_on_usage" if row["state"] == "blocked" and row["reason"] == "blocked_on_usage"
+                                   else row["state"]}
+        return result
+
+    def pause_for_usage(self, job_id, source_turn, quota):
+        if self.registry.version < 3:
+            return self.update(job_id, state="blocked", reason="blocked_on_usage; upgrade registry to preserve quota details")
+        with self.registry.connect(write=True) as connection:
+            existing = connection.execute("SELECT source_turn_id FROM usage_waits WHERE job_id = ?", (job_id,)).fetchone()
+            if existing is None or existing["source_turn_id"] != source_turn:
+                connection.execute("INSERT OR REPLACE INTO usage_waits VALUES (?, ?, ?, ?)",
+                                   (job_id, source_turn, canonical(quota), time.time()))
+            else:
+                connection.execute("UPDATE usage_waits SET quota = ? WHERE job_id = ?", (canonical(quota), job_id))
+            connection.execute("UPDATE deliveries SET state = 'blocked', reason = 'blocked_on_usage' WHERE job_id = ? "
+                               "AND state NOT IN ('completed','failed','revoked')", (job_id,))
+        return self.event(job_id)
+
+    def reserve_usage_resume(self, job_id):
+        with self.registry.connect(write=True) as connection:
+            event = self.event(job_id)
+            policy = self.policy(event["grant_id"])
+            usage = event["usage"]
+            if (event["state"] != "blocked" or event["reason"] != "blocked_on_usage" or policy["revoked_at"]
+                    or policy["consumed_usage_resumes"] >= policy["spec"].get("max_usage_resumes", 0)
+                    or policy["consumed_continuations"] >= policy["spec"]["max_continuations"]):
+                raise SchedulerError("Usage recovery revoked, unavailable, or exhausted")
+            result = self.registry.inspect(job_id)
+            if (usage["quota"]["availability"] != "available" or not result["receipt"]
+                    or fingerprint(result["receipt"]) != event["receipt_hash"]):
+                raise SchedulerError("Usage recovery lacks available quota or unchanged completion evidence")
+            resume_id = uuid.uuid4().hex
+            payload = json.loads(event["request_text"])
+            payload.update(event="resume_after_usage", event_id=resume_id, original_event_id=event["event_id"],
+                           interrupted_turn=usage["source_turn_id"],
+                           recovery="Inspect saved work and existing job receipts, then continue the unfinished approved slice. "
+                                    "Do not relaunch the registered job or repeat completed effects. Stop at the existing boundary.")
+            connection.execute("INSERT INTO usage_resumes(event_id,job_id,grant_id,source_turn_id,request_text,state) "
+                               "VALUES (?,?,?,?,?,'dispatching')",
+                               (resume_id, job_id, event["grant_id"], usage["source_turn_id"], canonical(payload)))
+            connection.execute("UPDATE continuation_grants SET consumed_continuations = consumed_continuations + 1 WHERE grant_id = ?",
+                               (event["grant_id"],))
+            connection.execute("UPDATE deliveries SET state = 'dispatching', reason = 'Usage recovery reserved' WHERE job_id = ?", (job_id,))
+        return self.event(job_id)
+
+    def update_usage_resume(self, job_id, state, turn_id=None):
+        with self.registry.connect(write=True) as connection:
+            connection.execute("UPDATE usage_resumes SET state = ?, turn_id = COALESCE(?,turn_id) WHERE sequence = "
+                               "(SELECT MAX(sequence) FROM usage_resumes WHERE job_id = ?)", (state, turn_id, job_id))
 
     def update(self, job_id, *, state, reason=None, turn_id=None):
         with self.registry.connect(write=True) as connection:
@@ -151,6 +219,10 @@ class DeliveryStore:
                 "UPDATE deliveries SET state = 'revoked', reason = 'Future continuation revoked' "
                 "WHERE grant_id = ? AND attempts = 0 AND state IN ('pending','blocked')", (grant_id,),
             )
+            if self.registry.version >= 3:
+                connection.execute("UPDATE deliveries SET state = 'revoked', reason = 'Usage recovery revoked' "
+                                   "WHERE grant_id = ? AND state = 'blocked' AND reason = 'blocked_on_usage' "
+                                   "AND job_id IN (SELECT job_id FROM usage_waits)", (grant_id,))
         return self.policy(grant_id)
 
 
@@ -179,8 +251,15 @@ class Dispatcher:
         event = self.store.event(job_id)
         if event["state"] in DONE:
             return event
-        if event["state"] == "blocked" and not event["attempts"]:
-            return event
+        if event["state"] == "blocked":
+            if event["reason"] == "blocked_on_usage" and "usage" in event:
+                policy = self.store.policy(event["grant_id"])
+                if policy["revoked_at"]:
+                    return self.store.update(job_id, state="revoked", reason="Usage recovery revoked; attempts remain consumed")
+                if not self._can_resume_usage(policy):
+                    return event
+            elif not event["attempts"]:
+                return event
         self.store.consume_check(job_id)
         event = self.store.event(job_id)
         policy = self.store.policy(event["grant_id"])
@@ -196,6 +275,8 @@ class Dispatcher:
             return self.store.update(job_id, state="blocked", reason="Completion evidence is unknown")
         if event["attempts"] and fingerprint(result["receipt"]) != event["receipt_hash"]:
             return self.store.update(job_id, state="blocked", reason="Completion receipt changed after reservation")
+        usage_verification = event["state"] == "blocked" and event["reason"] == "blocked_on_usage"
+        phase = "completion_confirmation" if event["attempts"] and not usage_verification else "worker_verification"
         try:
             with self.adapter_factory(policy["spec"]) as adapter:
                 snapshot = adapter.snapshot(event["worker_thread"])
@@ -205,6 +286,10 @@ class Dispatcher:
                         or snapshot["thread"].get("canAcceptDirectInput") is False):
                     raise NeedsOperator("Worker identity, workspace, or permissions changed")
                 if event["attempts"]:
+                    if event["state"] == "blocked" and event["reason"] == "blocked_on_usage":
+                        if reconcile_only:
+                            return event
+                        return self._resume_usage(adapter, event, snapshot)
                     return self._reconcile(adapter, event, snapshot)
                 if reconcile_only:
                     return event
@@ -219,31 +304,89 @@ class Dispatcher:
                 turn_id = adapter.start(event)
                 nonempty(turn_id, "Acknowledged turn ID", 256)
                 return self.store.update(job_id, state="started", turn_id=turn_id)
+        except ResponseTooLarge as error:
+            current = self.store.event(job_id)
+            resume = current.get("usage", {}).get("resume")
+            if resume and resume["state"] == "dispatching":
+                self.store.update_usage_resume(job_id, "uncertain")
+            if current["attempts"] and error.method == "turn/start":
+                phase = "dispatch_acknowledgement"
+            return self.store.update(job_id, state="blocked" if phase == "worker_verification" else "uncertain",
+                                     reason=f"{phase} failed: {error}; no resend authorized")
         except NeedsOperator as error:
             return self.store.update(job_id, state="blocked", reason=str(error))
         except Exception:
             current = self.store.event(job_id)
+            resume = current.get("usage", {}).get("resume")
+            if resume and resume["state"] == "dispatching":
+                self.store.update_usage_resume(job_id, "uncertain")
             if current["attempts"]:
                 return self.store.update(job_id, state="uncertain", reason="Transport outcome unknown; reconcile without resending")
             return self.store.update(job_id, state="blocked", reason="Worker transport unavailable before dispatch")
 
     def _reconcile(self, adapter, event, snapshot):
-        matches = adapter.find_event(event)
+        resume = event.get("usage", {}).get("resume")
+        target = {**event, **resume} if resume else event
+        matches = adapter.find_event(target)
         if len(matches) != 1:
             return self.store.update(event["job_id"], state="uncertain", reason="No unique matching turn in bounded history")
         turn = matches[0]
-        if event["turn_id"] and event["turn_id"] != turn["id"]:
+        if target["turn_id"] and target["turn_id"] != turn["id"]:
             raise NeedsOperator("Acknowledged turn disagrees with saved event history")
         if turn["status"] in {"failed", "interrupted"}:
-            return self.store.update(event["job_id"], state="failed", reason="Worker turn failed or was interrupted", turn_id=turn["id"])
+            if resume:
+                self.store.update_usage_resume(event["job_id"], "failed", turn["id"])
+            if turn.get("error_code") == "UsageLimitExceeded":
+                return self.store.pause_for_usage(event["job_id"], turn["id"], read_quota(adapter))
+            return self.store.update(event["job_id"], state="failed", reason="Worker turn failed or was interrupted",
+                                     turn_id=None if resume else turn["id"])
         if turn["status"] == "completed":
             if snapshot["thread"]["status"]["type"] != "idle":
                 raise NeedsOperator("Another worker turn is active after this completion")
-            return self.store.update(event["job_id"], state="completed", turn_id=turn["id"])
+            if resume:
+                self.store.update_usage_resume(event["job_id"], "completed", turn["id"])
+            return self.store.update(event["job_id"], state="completed",
+                                     turn_id=None if resume else turn["id"],
+                                     reason="Completed through usage recovery; see saved resume" if resume else None)
         flags = snapshot["thread"]["status"].get("activeFlags", [])
         if any(flag in {"waitingOnApproval", "waitingOnUserInput"} for flag in flags):
             raise NeedsOperator("Worker requires operator input")
-        return self.store.update(event["job_id"], state="started", turn_id=turn["id"])
+        if resume:
+            self.store.update_usage_resume(event["job_id"], "started", turn["id"])
+        return self.store.update(event["job_id"], state="started", turn_id=None if resume else turn["id"])
+
+    @staticmethod
+    def _can_resume_usage(policy):
+        return (not policy["revoked_at"]
+                and policy["consumed_usage_resumes"] < policy["spec"].get("max_usage_resumes", 0)
+                and policy["consumed_continuations"] < policy["spec"]["max_continuations"])
+
+    def _resume_usage(self, adapter, event, snapshot):
+        if snapshot["thread"]["status"]["type"] != "idle":
+            raise NeedsOperator("Worker changed after usage interruption")
+        if set(snapshot["thread"]["status"].get("activeFlags", [])) & {"waitingOnApproval", "waitingOnUserInput"}:
+            raise NeedsOperator("Worker requires operator input")
+        if adapter.has_queued_input(event["worker_thread"]):
+            raise NeedsOperator("Worker has other queued input")
+        latest = adapter.latest_turn(event["worker_thread"])
+        usage = event["usage"]
+        if (not latest or latest["id"] != usage["source_turn_id"]
+                or latest["status"] not in {"failed", "interrupted"}
+                or latest.get("error_code") != "UsageLimitExceeded"):
+            raise NeedsOperator("Usage interruption is no longer the worker's latest confirmed turn")
+        quota = read_quota(adapter)
+        self.store.pause_for_usage(event["job_id"], usage["source_turn_id"], quota)
+        if quota["availability"] != "available":
+            return self.store.event(event["job_id"])
+        reserved = self.store.reserve_usage_resume(event["job_id"])
+        resume = reserved["usage"]["resume"]
+        if self.store.policy(event["grant_id"])["revoked_at"]:
+            self.store.update_usage_resume(event["job_id"], "failed")
+            return self.store.update(event["job_id"], state="revoked", reason="Revoked before usage resume; allowance remains consumed")
+        turn_id = adapter.start({**event, **resume})
+        nonempty(turn_id, "Acknowledged usage-resume turn ID", 256)
+        self.store.update_usage_resume(event["job_id"], "started", turn_id)
+        return self.store.update(event["job_id"], state="started", reason="Resumed after usage interruption")
 
     def watch(self, job_id, *, interval=2):
         if not 0.05 <= interval <= 60:
@@ -259,6 +402,32 @@ class Dispatcher:
     def _watch(self, job_id, interval):
         while True:
             result = self.step(job_id)
+            if result["state"] == "blocked" and result["reason"] == "blocked_on_usage":
+                usage = result.get("usage")
+                policy = self.store.policy(result["grant_id"])
+                reset = usage["quota"]["reset_at"] if usage else None
+                if (usage and usage["quota"]["availability"] == "available" and self._can_resume_usage(policy)
+                        and policy["consumed_checks"] < policy["spec"]["max_checks"]):
+                    continue
+                # A reset time schedules a fresh check; it never proves refill.
+                if (not usage or not self._can_resume_usage(policy)
+                        or policy["consumed_checks"] >= policy["spec"]["max_checks"]
+                        or reset is None or not time.time() < reset <= usage["created_at"] + 86400):
+                    return result
+                deadline = time.monotonic() + min(86400, reset - time.time())
+                while time.time() < reset:
+                    policy = self.store.policy(result["grant_id"])
+                    if policy["revoked_at"]:
+                        return self.store.update(job_id, state="revoked", reason="Usage recovery revoked; attempts remain consumed")
+                    current = self.store.event(job_id)
+                    if current["state"] != "blocked":
+                        break
+                    if (current["reason"] != "blocked_on_usage" or not self._can_resume_usage(policy)
+                            or policy["consumed_checks"] >= policy["spec"]["max_checks"]
+                            or time.monotonic() >= deadline):
+                        return current
+                    time.sleep(min(1, max(0, reset - time.time()), max(0, deadline - time.monotonic())))
+                continue
             if result["state"] not in {"pending", "started", "dispatching"}:
                 return result
             time.sleep(interval)

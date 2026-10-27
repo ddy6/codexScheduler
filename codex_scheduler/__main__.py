@@ -11,11 +11,13 @@ from .registry import Registry, SchedulerError
 from .runner import launch
 from .project import DEFAULT_LIMITS, Project
 from .assets import export_profile, export_skill, package_version
+from .transport import receive_limit
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", action="version", version="codex-scheduler " + package_version())
+    parser.add_argument("--max-receive-bytes", type=int, help="Finite Codex receive limit; override transport only, without changing task allowance")
     location = parser.add_mutually_exclusive_group()
     location.add_argument("--state-dir", type=Path)
     location.add_argument("--project", type=Path, help="Explicit TOML profile; paths resolve from the profile")
@@ -42,6 +44,7 @@ def main(argv=None):
     configure.add_argument("--socket", type=Path, required=True)
     configure.add_argument("--max-continuations", type=int)
     configure.add_argument("--max-checks", type=int)
+    configure.add_argument("--max-usage-resumes", type=int, help="Explicit recovery allowance within the total continuation budget; default 0")
     configure.add_argument("--permissions-file", type=Path)
     arm = commands.add_parser("arm", help="Save continuation instructions before yielding")
     arm.add_argument("--job", required=True)
@@ -59,7 +62,7 @@ def main(argv=None):
     observe.add_argument("--job", help="Optional exact job to include in the snapshot")
     observe.add_argument("--duration", type=float, default=900)
     observe.add_argument("--max-events", type=int, default=10000)
-    for name in ("revoke-delivery", "delivery-policy"):
+    for name in ("revoke-delivery", "delivery-policy", "usage-status"):
         command = commands.add_parser(name)
         command.add_argument("--grant", required=True)
     commands.add_parser("project-info", help="Inspect a profile without creating state or starting work")
@@ -73,6 +76,10 @@ def main(argv=None):
             print(json.dumps(result, indent=2))
             return 0
         project = Project.load(args.project) if args.project else None
+        if args.max_receive_bytes is not None:
+            receive_limit(args.max_receive_bytes)
+            if project:
+                project.limit("max_receive_bytes", args.max_receive_bytes)
         if args.action == "project-info":
             if project is None:
                 raise SchedulerError("project-info requires --project")
@@ -95,6 +102,8 @@ def main(argv=None):
         elif args.action == "configure-delivery":
             continuations = bound("max_continuations", args.max_continuations)
             checks = bound("max_checks", args.max_checks)
+            usage_resumes = bound("max_usage_resumes", args.max_usage_resumes)
+            receive_bytes = bound("max_receive_bytes", args.max_receive_bytes)
         registry = Registry(state_dir, create=args.action in {"create-grant", "upgrade"})
         if project and hasattr(args, "grant"):
             project.check_grant(registry, args.grant)
@@ -126,6 +135,11 @@ def main(argv=None):
             from .codex import CodexAdapter
             from .delivery import DeliveryStore, Dispatcher
 
+            def adapter_factory(spec):
+                if args.max_receive_bytes is not None:
+                    spec = {**spec, "max_receive_bytes": args.max_receive_bytes}
+                return CodexAdapter(spec)
+
             store = DeliveryStore(registry)
             if args.action == "configure-delivery":
                 permissions = None
@@ -137,7 +151,8 @@ def main(argv=None):
                     permissions = json.loads(data)
                 result = store.configure(
                     args.grant, socket_path=args.socket, max_continuations=continuations,
-                    max_checks=checks, permissions=permissions,
+                    max_checks=checks, permissions=permissions, max_usage_resumes=usage_resumes,
+                    max_receive_bytes=receive_bytes,
                 )
             elif args.action == "arm":
                 result = store.arm(args.job, args.instructions)
@@ -147,14 +162,20 @@ def main(argv=None):
                 result = store.policy(args.grant)
             elif args.action == "delivery-status":
                 result = store.event(args.job)
+            elif args.action == "usage-status":
+                from .usage import read_quota
+
+                policy = store.policy(args.grant)
+                with adapter_factory(policy["spec"]) as adapter:
+                    result = {"grant_id": args.grant, "quota": read_quota(adapter)}
             elif args.action == "observe-progress":
                 from .progress import ProgressObserver
 
                 observer = ProgressObserver(registry, args.grant, job_id=args.job, duration=args.duration,
-                                            max_events=args.max_events, adapter_factory=CodexAdapter)
+                                            max_events=args.max_events, adapter_factory=adapter_factory)
                 result = {**observer.run(), **observer.locations()}
             else:
-                dispatcher = Dispatcher(registry, CodexAdapter)
+                dispatcher = Dispatcher(registry, adapter_factory)
                 if args.action == "run":
                     if not 0.05 <= args.interval <= 60:
                         raise SchedulerError("Polling interval must be between 0.05 and 60 seconds")
@@ -172,7 +193,7 @@ def main(argv=None):
                     event = store.event(args.job)
                     observer = ProgressObserver(registry, event["grant_id"], job_id=args.job,
                                                 duration=args.progress_duration, max_events=args.progress_max_events,
-                                                adapter_factory=CodexAdapter)
+                                                adapter_factory=adapter_factory)
                 with observer.background() if observer else nullcontext():
                     if args.action == "run":
                         launch(registry, args.job)

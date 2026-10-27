@@ -7,23 +7,28 @@ import re
 import tomllib
 
 from .registry import SchedulerError
+from .transport import DEFAULT_RECEIVE_BYTES, MAX_RECEIVE_BYTES, receive_limit
 
 
 DEFAULT_LIMITS = {
     "max_jobs": 1, "timeout_seconds": 60, "max_log_bytes": 1048576,
-    "max_continuations": 1, "max_checks": 120,
+    "max_continuations": 1, "max_checks": 120, "max_usage_resumes": 0,
+    "max_receive_bytes": DEFAULT_RECEIVE_BYTES,
 }
 MAX_LIMITS = {
     "max_jobs": 1000, "timeout_seconds": 86400, "max_log_bytes": 104857600,
-    "max_continuations": 1000, "max_checks": 10000,
+    "max_continuations": 1000, "max_checks": 10000, "max_usage_resumes": 100,
+    "max_receive_bytes": MAX_RECEIVE_BYTES,
 }
 
 
 def valid_limit(name, value):
+    if name == "max_receive_bytes":
+        return receive_limit(value)
     if name == "timeout_seconds":
         valid = type(value) in (int, float) and math.isfinite(value) and 0 < value <= MAX_LIMITS[name]
     else:
-        valid = type(value) is int and 1 <= value <= MAX_LIMITS[name]
+        valid = type(value) is int and (0 if name == "max_usage_resumes" else 1) <= value <= MAX_LIMITS[name]
     if not valid:
         raise SchedulerError(f"Invalid project limit: {name}")
     return value

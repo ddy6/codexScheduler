@@ -29,8 +29,10 @@ worker and workspace. The dispatcher verifies the receipt, idle worker, empty
 queue, workspace, and permission snapshot. It commits the immutable event and
 consumed attempt before starting a turn in that exact worker.
 
-A lost acknowledgement stays uncertain. Reconciliation searches bounded history
-for the saved event input and checks any acknowledged turn ID. It never resends.
+A lost acknowledgement stays uncertain. Reconciliation verifies the saved input
+and status in the exact acknowledged turn. Status pages omit items, and full item
+reads stay scoped to that turn. Missing acknowledgements use bounded discovery.
+Oversized evidence is reported explicitly; reconciliation never resends.
 Revocation blocks later reservations without pretending that an already reserved
 send or active turn can be undone.
 
@@ -44,3 +46,9 @@ An optional progress observer owns a separate app-server connection. It listens
 to the exact bound worker and renders bounded private snapshots from existing
 events and local job receipts. It never starts a turn or changes the registry's
 allowances. Observation failure and delivery uncertainty remain separate states.
+
+Usage interruption is distinct from idle or completion. Schema 3 stores waits
+and separately identified resume attempts for scheduler-owned turns. Recovery is
+off by default, retains workspace ownership, and consumes the original task's
+allowance before effects. Reset metadata schedules a fresh availability check;
+it does not grant a turn or permit a command relaunch.

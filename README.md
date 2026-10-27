@@ -56,6 +56,8 @@ reboot, long unattended runs, and competing interactive writers are unverified.
 - [Completion, stopping, and recovery](docs/completion-delivery.md)
 - [Architecture](docs/architecture.md)
 - [Automatic progress capture](docs/progress.md)
+- [Usage limits and recovery](docs/usage-limits.md)
+- [Response bounds and confirmation](docs/response-limits.md)
 - [Release checks and evidence](docs/release.md)
 
 ## Design
@@ -74,6 +76,10 @@ For a rolling local progress document, add `--progress` to `run` or `watch`.
 Ordinary code copies existing worker events and job evidence without another
 model call. The supervisor reads the snapshot when needed; reading or summarizing
 it in a model turn still uses tokens.
+
+Usage interruptions remain visible as unfinished work when a worker goes idle.
+`usage-status` reads quota percentages and reset metadata. Automatic recovery of
+scheduler-owned turns is opt-in and consumes the existing continuation budget.
 
 ## Development
 

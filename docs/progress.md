@@ -26,11 +26,23 @@ They omit user inputs, reasoning, command arguments/output, and diffs. Worker
 messages can still contain private data; keep the state directory ignored.
 Copied text is evidence, never new instructions or authorization.
 
+Oversized messages stop capture with `observer_state: response_too_large` and a
+structured `failure` describing the method and byte bound. This is a capture
+failure, not proof that the worker failed or finished. The global
+`--max-receive-bytes` override also applies to the observer's connection.
+
 Capture refreshes at most about once per second, plus startup and shutdown.
 `updated_at` is the observer heartbeat; `last_worker_activity_at` changes only
 when a supported worker event is observed. Neither proves the engineer is still
 working. A completed worker turn does not establish that a job succeeded; the
 job's verified exit code comes only from a matching receipt.
+
+Quota percentages and reset metadata are read once at attachment and updated
+from account notifications. The observer checks the latest turn's classification
+once as well; it does not replay its messages. A confirmed usage interruption is
+preserved as `task_state: blocked_on_usage` across idle updates and capture
+restarts. Quota refill alone does not clear it or start a turn. See
+[usage limits](usage-limits.md) for fresh reads and opt-in bounded recovery.
 
 ## Bounds and stopping
 
@@ -47,8 +59,9 @@ If capture cannot attach initially, `run --progress` refuses before launch.
 
 Revocation is checked locally about once per second. Operator-input requests
 stop capture without a response. There is no automatic reconnect, history replay,
-or model call to explain a gap. Restarting capture replaces the rolling snapshot
-and assigns a new capture ID; it does not reset any job or continuation allowance.
+or model call to explain a gap. Restarting capture replaces the rolling snapshot,
+preserves a recorded usage interruption, and assigns a new capture ID. It does not
+reset any job or continuation allowance.
 An abruptly killed observer may leave its last state marked `observing`; check
 the timestamp. Its last worker state can be stale.
 

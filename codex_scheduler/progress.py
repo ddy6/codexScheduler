@@ -1,6 +1,7 @@
 """Observe existing worker events and render a bounded local snapshot, without inference."""
 
 from contextlib import contextmanager
+import json
 import math
 from pathlib import Path
 import threading
@@ -11,6 +12,8 @@ from .codex import CodexAdapter
 from .delivery import DeliveryStore, NeedsOperator
 from .registry import SchedulerError
 from .storage import atomic_json, atomic_text, exclusive_lease, utc_now
+from .usage import error_code, quota_snapshot, read_quota
+from .transport import ResponseTooLarge
 
 
 def text(value, limit=2000):
@@ -50,6 +53,9 @@ class ProgressObserver:
         method = message.get("method")
         if not isinstance(params, dict):
             return
+        if method == "account/rateLimits/updated":
+            self.record["quota"] = quota_snapshot(params, previous=self.record["quota"])
+            return
         thread = params.get("threadId")
         turn_id = params.get("turnId")
         # Some plan events carry only a turn ID. Accept those only after this
@@ -65,6 +71,19 @@ class ProgressObserver:
             if method == "turn/started":
                 self.record["plan"] = []
                 self.record["latest_tool"] = None
+                self.terminal_turn(self.record["turn_id"], "inProgress", None)
+                self.record["last_error"] = None
+            else:
+                code = error_code(turn.get("error"))
+                previous = self.record["last_error"]
+                if not code and previous and not previous["will_retry"] and previous["turn_id"] == self.record["turn_id"]:
+                    code = previous["code"]
+                self.terminal_turn(self.record["turn_id"], turn.get("status"), code)
+        elif method == "error":
+            code = error_code(params.get("error"))
+            if code:
+                self.record["last_error"] = {"code": code, "turn_id": text(turn_id, 256),
+                                             "will_retry": params.get("willRetry") is not False}
         elif method == "thread/status/changed":
             status = params.get("status", {})
             self.record["worker_state"] = text(status.get("type"), 64)
@@ -102,13 +121,41 @@ class ProgressObserver:
         if changed:
             self.record["last_worker_activity_at"] = utc_now()
 
+    def terminal_turn(self, turn_id, status, code):
+        previous = self.record["usage_interruption"]
+        if previous and previous["turn_id"] == turn_id:
+            if status == "inProgress" or (status in {"failed", "interrupted"} and not code):
+                return
+        if status == "inProgress":
+            self.record["usage_interruption"] = None
+            self.record["task_state"] = "worker_turn_active"
+        elif status in {"failed", "interrupted"} and code == "UsageLimitExceeded":
+            self.record["usage_interruption"] = previous if previous and previous["turn_id"] == turn_id else {
+                "turn_id": turn_id, "error_code": code, "observed_at": utc_now()}
+            self.record["task_state"] = "blocked_on_usage"
+        elif status in {"failed", "interrupted", "completed"}:
+            self.record["usage_interruption"] = None
+            self.record["task_state"] = "worker_turn_completed" if status == "completed" else "worker_turn_failed"
+
     def refresh_local(self):
         if self.job_id:
             result = self.registry.inspect(self.job_id)
             self.record["job"] = {key: result[key] for key in ("job_id", "recorded_state", "observed_state")}
             self.record["job"]["verified_exit_code"] = result["receipt"]["exit_code"] if result["receipt"] else None
             try:
-                self.record["delivery_state"] = self.store.event(self.job_id)["state"]
+                event = self.store.event(self.job_id)
+                self.record["delivery_state"] = event["state"]
+                usage = event.get("usage")
+                if usage:
+                    if usage["state"] == "blocked_on_usage":
+                        if self.record["turn_id"] in {None, usage["source_turn_id"]}:
+                            self.terminal_turn(usage["source_turn_id"], "failed", "UsageLimitExceeded")
+                        if (self.record["quota"]["availability"] == "unknown"
+                                or usage["quota"]["observed_at"] > self.record["quota"]["observed_at"]):
+                            self.record["quota"] = usage["quota"]
+                    elif (usage["resume"] and usage["resume"]["state"] == "completed"
+                          and self.record["turn_id"] in {None, usage["resume"]["turn_id"]}):
+                        self.terminal_turn(usage["resume"]["turn_id"], "completed", None)
             except SchedulerError:
                 self.record["delivery_state"] = None
 
@@ -120,7 +167,19 @@ class ProgressObserver:
                  f"Snapshot updated: {self.record['updated_at']}",
                  f"Last worker activity observed: {self.record['last_worker_activity_at'] or 'none'}",
                  f"Worker state last observed: {self.record['worker_state']}",
+                 f"Task state: {self.record['task_state']}",
                  f"Capture note: {self.record['note']}", ""]
+        quota = self.record["quota"]
+        lines += [f"Quota last reported: {quota['availability']}", f"Reported reset (Unix seconds): {quota['reset_at']}"]
+        for bucket in quota["buckets"]:
+            for window in bucket["windows"]:
+                lines.append(f"    {text(bucket['limit_id'], 128)}: {window['used_percent']}% used / "
+                             f"{window['window_minutes']} minutes; reset {window['reset_at']}")
+        interruption = self.record["usage_interruption"]
+        if interruption:
+            lines += ["", "Usage interruption is unresolved; idle does not mean the engineering task finished.",
+                      "Resume the same worker only within the existing scope and allowance. Do not relaunch the job."]
+        lines.append("")
         job = self.record["job"]
         if job:
             lines += [f"Job: {job['observed_state']} (recorded: {job['recorded_state']})",
@@ -150,6 +209,20 @@ class ProgressObserver:
             raise SchedulerError("Another observer owns this grant's progress snapshot") from error
 
     def _run(self, stop, ready):
+        previous = None
+        path = self.directory / "progress.json"
+        if not path.is_symlink():
+            try:
+                with path.open("rb") as stream:
+                    data = stream.read(65537)
+                saved = json.loads(data) if len(data) <= 65536 else {}
+                fault = saved.get("usage_interruption")
+                if (saved.get("worker_thread") == self.grant["worker_thread"] and saved.get("grant_id") == self.grant["grant_id"]
+                        and isinstance(fault, dict) and fault.get("error_code") == "UsageLimitExceeded"
+                        and isinstance(fault.get("turn_id"), str) and len(fault["turn_id"]) <= 256):
+                    previous = {key: fault.get(key) for key in ("turn_id", "error_code", "observed_at")}
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
         self.record = {
             "schema_version": 1, "capture_id": uuid.uuid4().hex, "grant_id": self.grant["grant_id"],
             "worker_thread": self.grant["worker_thread"], "started_at": utc_now(),
@@ -157,6 +230,9 @@ class ProgressObserver:
             "last_worker_activity_at": None, "received_events": 0, "plan": [],
             "latest_message": None, "latest_tool": None, "job": None, "delivery_state": None,
             "history_replayed": False,
+            "quota": quota_snapshot(), "usage_interruption": previous, "last_error": None,
+            "task_state": "blocked_on_usage" if previous else "unknown",
+            "failure": None,
             "note": "Live capture only; earlier events and disconnect gaps are not replayed.",
         }
         self.save()
@@ -175,6 +251,12 @@ class ProgressObserver:
                 if set(snapshot["thread"]["status"].get("activeFlags", [])) & {"waitingOnApproval", "waitingOnUserInput"}:
                     raise NeedsOperator("Worker requires operator input")
                 adapter.on_notification = self.accept
+                self.record["quota"] = read_quota(adapter)
+                if hasattr(adapter, "latest_turn"):
+                    latest = adapter.latest_turn(self.grant["worker_thread"])
+                    if latest and self.record["turn_id"] in {None, latest["id"]}:
+                        self.record["turn_id"] = latest["id"]
+                        self.terminal_turn(latest["id"], latest["status"], latest.get("error_code"))
                 self.record["observer_state"] = "observing"
                 self.refresh_local()
                 self.save()
@@ -197,6 +279,10 @@ class ProgressObserver:
                         refreshed = time.monotonic()
                 else:
                     self.record["observer_state"] = "stopped"
+        except ResponseTooLarge as error:
+            self.record["observer_state"] = "response_too_large"
+            self.record["failure"] = error.details("progress_capture")
+            self.record["note"] = f"Progress capture failed: {error}. Worker completion is not established."
         except NeedsOperator:
             self.record["observer_state"] = "needs_operator"
             self.record["note"] = "Binding changed or operator input required; observer sent no response."

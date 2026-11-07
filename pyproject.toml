@@ -45,5 +45,5 @@ include-package-data = false
 "share/codex-scheduler/skills/poll-review" = ["skills/poll-review/SKILL.md"]
 "share/codex-scheduler/skills/poll-review/agents" = ["skills/poll-review/agents/openai.yaml"]
 "share/codex-scheduler/skills/poll-review/references" = ["skills/poll-review/references/hosts.md", "skills/poll-review/references/timer.md"]
-"share/codex-scheduler/skills/poll-review/scripts" = ["skills/poll-review/scripts/timer.py"]
+"share/codex-scheduler/skills/poll-review/scripts" = ["skills/poll-review/scripts/timer.py", "skills/poll-review/scripts/preflight.py"]
 "share/codex-scheduler/examples" = ["examples/project.toml"]

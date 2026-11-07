@@ -14,7 +14,7 @@ SKILLS = {
     "bounded-workflow": SKILL_FILES,
     "poll-review": (
         "SKILL.md", "agents/openai.yaml", "references/hosts.md",
-        "references/timer.md", "scripts/timer.py",
+        "references/timer.md", "scripts/timer.py", "scripts/preflight.py",
     ),
 }
 

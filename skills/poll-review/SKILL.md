@@ -17,7 +17,11 @@ Read applicable project guidance. Use existing task authority and consumed
 allowance. Bind the actual engineer/root and helper identities, the workspace,
 continuation scope, finite poll/wake allowance, stop conditions, and one return
 sender. Never choose a newest thread or derive identity from a display name.
-Use the existing team when compatible. Do not create extra agents to relay messages.
+Reuse a compatible helper only under its actual native parent. A fresh parent may
+create its own single clean helper when authorized, after reconciling predecessor
+jobs, timers, assignments and sends. Preserve old bindings and consumed allowance;
+never reparent or assign another root's child. Same-parent replacement requires
+supported closure/reset at a clean boundary, not an extra slot or relay agent.
 
 Set an accumulated helper-context limit and refresh threshold before assignment.
 A starting ceiling is two batches or 64 KiB of task material, whichever comes first,
@@ -29,7 +33,17 @@ refresh is possible.
 For an authorized new helper, start without the engineer's transcript. Supply this
 role, exact bindings, compact task intent, and only the assigned review material.
 Verify loaded permissions, tool availability, and private scratch access. The helper
-acknowledges READY before assignment. A restrictive loaded role cannot be widened
+acknowledges its actual readiness before assignment. Keep setup bounded: the parent
+verifies native identity/model/permissions and supplies a compact evidence packet;
+the helper checks its scratch and only the required exposed tools. Never dump a tool
+catalog or full descriptions into the helper. Count setup tool responses toward the
+context ceiling and stop discovery before it consumes the review budget.
+
+Use [host integration](references/hosts.md) for the bounded preflight. Report
+READY only when review and poll capabilities are available, REVIEW_ONLY when review
+is usable but automatic return is unavailable, or NOT_READY when binding, context or
+reconciliation fails. Do not turn missing live wake evidence into a setup test send.
+A restrictive loaded role cannot be widened
 by editing its instruction file. Read [host integration](references/hosts.md) before
 enabling automatic wakes; if the exact route is unavailable, retain manual polling.
 

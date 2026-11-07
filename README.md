@@ -30,6 +30,8 @@ python3 -c 'from pathlib import Path; import shutil; shutil.copytree("skills/pol
 Use `$poll-review` for an authorized team. For other hosts, copy the same folder
 to their skill location or reference its instructions from local project guidance.
 See [host setup and capability checks](skills/poll-review/references/hosts.md).
+Setup uses bounded evidence and separates review readiness from automatic polling;
+`scripts/preflight.py` checks the packet without starting a timer or sending a message.
 No scheduler package or Codex server is required for the skill and timer.
 
 For long waits, the helper anchors a deadline, completes any assigned review outside

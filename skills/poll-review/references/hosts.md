@@ -36,6 +36,65 @@ Example request after installation:
 > exact identities, finite wake allowance, and available return route first. Keep
 > polling manual if automatic return is unavailable.
 
+## Bounded adoption
+
+The parent verifies actual native parentage, selected model/effort and loaded
+permissions, and supplies only the relevant facts with evidence references. The
+helper verifies scratch access and exposed tools; it need not repeat metadata
+inspection that its loaded permissions do not allow. Record who verified each fact.
+A disk profile alone is not loaded-permission evidence.
+
+Use narrow tool-name discovery and return names only (for example, at most eight
+matches and 2 KiB). Read a selected tool's schema only when necessary. Never print
+all tools or their full descriptions. Reserve context for the actual assignment;
+count startup output, not just review batches. If the ceiling is reached, preserve
+state and use supported closure/reset before more assignments.
+
+Distinguish capability from delivery proof. A supported host sleep that returns to
+the same helper without inference, or a documented automatic tool-completion event,
+can satisfy timer completion when permitted by loaded rules. A yielded shell handle
+that requires another user prompt cannot. Name the actual mechanism in evidence;
+neither the timer script nor an offline test establishes that host capability.
+No setup timer or test wake is required. Verify clock access at the first authorized
+real timer use and retain the first real delivery/owned-handle acknowledgment separately.
+
+The optional standalone checker reads a host-authored JSON packet (maximum 16 KiB):
+
+```sh
+python3 skills/poll-review/scripts/preflight.py --evidence private/host-evidence.json
+```
+
+Example structure (all identifiers synthetic; missing capabilities stay unavailable):
+
+```json
+{
+  "schema_version": 1,
+  "root": "example-root",
+  "helper": "example-helper",
+  "observed_parent": "example-root",
+  "effects_reconciled": true,
+  "context": {"observed_bytes": 4096, "limit_bytes": 65536, "batches": 0, "batch_limit": 2},
+  "allowance": {"total": 6, "consumed": 0},
+  "capabilities": {
+    "native_binding": {"available": true, "verified_by": "parent", "evidence": "native metadata receipt"}
+  }
+}
+```
+
+Supply actual evidence for each available capability; do not copy the example as
+proof. Review requires `native_binding`, `loaded_permissions`, `scratch_access` and
+`direct_assignment`. Polling additionally requires `owned_handle_inspection`,
+`timer_completion`, `exact_root_status`, `exact_root_push`, `durable_continuation`
+and `single_controller`. Each entry has `available` boolean and, when true,
+`verified_by` (`parent` or `helper`) and a short `evidence` reference.
+
+Exit 0 means READY according to supplied evidence; exit 1 reports REVIEW_ONLY or
+NOT_READY and missing capabilities; exit 2 means invalid input. The checker does
+not inspect the host, attest truth, write state, reserve allowance or authorize a
+send. Its context measurement is a supplied byte proxy, not total model context.
+Before each real cycle, recheck authority, budget and pending effects in the owner's
+ledger. A previous READY result is not a reusable delivery grant.
+
 ## Capability check before automatic return
 
 Installing a skill does not install an agent transport. Verify these capabilities

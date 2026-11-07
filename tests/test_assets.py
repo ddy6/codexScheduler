@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from codex_scheduler.__main__ import main as cli
-from codex_scheduler.assets import SKILL_FILES, bundled_bytes, export_profile, export_skill
+from codex_scheduler.assets import SKILL_FILES, SKILLS, bundled_bytes, export_profile, export_skill
+from codex_scheduler.registry import SchedulerError
 from codex_scheduler.project import Project
 
 
@@ -32,6 +33,24 @@ class AssetTests(unittest.TestCase):
         profile = Project.load(path)
         self.assertEqual(profile.workspace, self.root.resolve())
         self.assertFalse(profile.state_dir.exists())
+
+    def test_named_skill_exports_complete_standalone_bundle_without_registry(self):
+        destination = self.root / "poll-review"
+        with patch("codex_scheduler.__main__.Registry") as registry, redirect_stdout(io.StringIO()):
+            self.assertEqual(cli(["export-skill", str(destination), "--name", "poll-review"]), 0)
+            registry.assert_not_called()
+        files = {str(path.relative_to(destination)) for path in destination.rglob("*") if path.is_file()}
+        self.assertEqual(files, set(SKILLS["poll-review"]))
+        for name in SKILLS["poll-review"]:
+            self.assertEqual((destination / name).read_bytes(), bundled_bytes(Path("skills/poll-review") / name))
+        with self.assertRaises(FileExistsError):
+            export_skill(destination, "poll-review")
+
+    def test_unknown_skill_cannot_select_arbitrary_source_or_create_destination(self):
+        destination = self.root / "missing"
+        with self.assertRaises(SchedulerError):
+            export_skill(destination, "../private")
+        self.assertFalse(destination.exists())
 
     def test_existing_destinations_are_preserved(self):
         profile = self.root / "scheduler.toml"

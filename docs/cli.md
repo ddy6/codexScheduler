@@ -15,7 +15,7 @@ an existing policy does not change its allowances. See [response limits](respons
 | Command | Purpose |
 | --- | --- |
 | `export-profile DESTINATION` | Copy the example TOML profile; refuse an existing file |
-| `export-skill DESTINATION` | Copy the complete skill; refuse an existing directory |
+| `export-skill DESTINATION [--name NAME]` | Copy bounded-workflow (default) or poll-review; refuse an existing directory |
 | `project-info` | Inspect the selected profile without creating state |
 | `create-grant --thread ID --scope TEXT` | Record explicit task authority and bounds |
 | `grant-status --grant ID` | Read the grant and consumed job count |
@@ -68,3 +68,7 @@ event always needs interpretation; it is not permission to retry or expand scope
 
 Full workflows: [local runner](job-runner.md), [project skill](../skills/bounded-workflow/references/usage.md),
 and [completion delivery](completion-delivery.md).
+
+The exported `poll-review` bundle has its own standalone `scripts/timer.py` with
+`start`, `status`, `wait`, `cancel` and `read-review` commands. It does not use
+scheduler profiles or grants. See its [CLI examples and limits](../skills/poll-review/references/timer.md).

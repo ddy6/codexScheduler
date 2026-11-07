@@ -2,6 +2,7 @@ include LICENSE README.md pyproject.toml MANIFEST.in
 include requirements-dev.txt requirements-prototype.txt
 recursive-include codex_scheduler *.py
 recursive-include skills/bounded-workflow *.md *.yaml *.py
+recursive-include skills/poll-review *.md *.yaml *.py
 include examples/project.toml
 recursive-include docs *.md
 recursive-include prototypes *.py

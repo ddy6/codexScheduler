@@ -1,0 +1,3 @@
+interface:
+  display_name: "Poll and review"
+  short_description: "Keep a focused reviewer on bounded poll deadlines"

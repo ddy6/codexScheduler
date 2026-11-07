@@ -10,6 +10,13 @@ from .registry import SchedulerError
 SKILL_FILES = (
     "SKILL.md", "agents/openai.yaml", "references/usage.md", "scripts/scheduler.py",
 )
+SKILLS = {
+    "bounded-workflow": SKILL_FILES,
+    "poll-review": (
+        "SKILL.md", "agents/openai.yaml", "references/hosts.md",
+        "references/timer.md", "scripts/timer.py",
+    ),
+}
 
 
 def package_version():
@@ -40,9 +47,11 @@ def bundled_bytes(relative):
     return installed.locate_file(matches[0]).read_bytes()
 
 
-def export_skill(destination):
+def export_skill(destination, name="bounded-workflow"):
+    if name not in SKILLS:
+        raise SchedulerError("Unknown skill; choose bounded-workflow or poll-review")
     # Read the entire bundle before creating a destination.
-    files = {name: bundled_bytes(Path("skills/bounded-workflow") / name) for name in SKILL_FILES}
+    files = {file: bundled_bytes(Path("skills") / name / file) for file in SKILLS[name]}
     destination = Path(destination).absolute()
     destination.mkdir(parents=True, exist_ok=False)
     for name, data in files.items():

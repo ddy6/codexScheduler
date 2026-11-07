@@ -20,11 +20,28 @@ artifact review.
 
 It then creates two fresh virtual environments outside the source package. The
 base install has no optional dependencies. From an unrelated project it exports
-the profile and skill, uses the installed skill helper, runs one harmless job,
+the profile and both skills, uses the installed scheduler helper, runs one harmless job,
 checks its receipt, refuses relaunch, and revokes a fixture before dispatch. No
 worker is contacted. A second environment installs the `codex` extra from a local
 wheelhouse and checks that the WebSocket client can load. Downloading that optional
 dependency requires network access; no model or Codex service is started.
+
+The lightweight fixture runs the exported standalone timer with isolated Python,
+checks its exact binding and due result, refuses a duplicate wait and verifies
+cancellation. The archive audit requires every resource of both skills, including
+the timer and its references. Clock, cancellation, duplicate-owner and guarded
+review cases are also covered by focused offline tests. macOS boot-identity reads
+may require permission outside an agent sandbox; the test does not bypass that gate.
+
+To verify entirely offline, supply a directory of previously downloaded optional
+dependency wheels compatible with the selected interpreter:
+
+```sh
+python -m tools.verify_release --work-dir state/release-check-002 --wheelhouse PATH_TO_WHEELS
+```
+
+This skips downloading. A missing or incompatible wheel fails installation rather
+than falling back to the network.
 
 `report.json` records artifact hashes, sizes, timings, and outcomes. Logs and
 virtual environments remain in the ignored work directory for local review.
@@ -53,3 +70,9 @@ The offline suite passes on Python 3.11 and 3.14; each release report records it
 clean-install interpreter. Machine reboot, extended idle periods, native child
 agents, implicit skill activation, and competing interactive writers remain
 unverified. The Codex app-server protocol is experimental.
+
+The `poll-review` role instructions are model-agnostic; this is not a live proof of
+helper activation, exact-root delivery, total context bounds or token savings.
+Other-agent hosts and Linux timer behavior have not been exercised in this release's
+macOS checks. The standalone timer has no wake transport, reboot recovery or central
+task budget. Keep those limits separate from the durable scheduler's evidence.

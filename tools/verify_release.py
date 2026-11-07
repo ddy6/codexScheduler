@@ -13,6 +13,8 @@ import tarfile
 import time
 import zipfile
 
+from codex_scheduler.assets import SKILLS
+
 
 FORBIDDEN_PARTS = {
     ".git", ".venv", "__pycache__", "state", "runs", "private", "scratch",
@@ -100,20 +102,26 @@ def inspect_artifact(path, public_files, private_values):
     if wheel:
         if not any(name.endswith(".dist-info/licenses/LICENSE") for name in files):
             raise ValueError("Wheel is missing the license")
-        if not any(name.endswith("/skills/bounded-workflow/SKILL.md") for name in files):
-            raise ValueError("Wheel is missing the skill")
-    elif not {"LICENSE", "pyproject.toml", "skills/bounded-workflow/SKILL.md", "examples/project.toml"} <= files.keys():
+    elif not {"LICENSE", "pyproject.toml", "examples/project.toml"} <= files.keys():
         raise ValueError("Source archive is missing setup assets")
+    for skill, members in SKILLS.items():
+        for member in members:
+            expected = f"skills/{skill}/{member}"
+            found = (any(name.endswith("/" + expected) for name in files)
+                     if wheel else expected in files)
+            if not found:
+                raise ValueError("Artifact is missing skill resource: " + expected)
     return {"file": path.name, "bytes": path.stat().st_size, "members": len(files),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 class Verification:
-    def __init__(self, source, work, python, artifacts=None):
+    def __init__(self, source, work, python, artifacts=None, wheelhouse=None):
         self.source = source.resolve()
         self.work = work.resolve()
         self.python = python
         self.artifact_source = artifacts.resolve() if artifacts else None
+        self.wheelhouse = wheelhouse.resolve() if wheelhouse else None
         if self.work == self.source or any(self.work.is_relative_to(self.source / folder)
                                           for folder in ("codex_scheduler", "skills", "tests", "tools", "docs", "examples", "prototypes")):
             raise ValueError("Verification work must stay outside distributed source directories")
@@ -169,6 +177,25 @@ class Verification:
         self.command("export-skill", [str(cli), "export-skill", str(skill)], cwd=project)
         self.command("refuse-profile-overwrite", [str(cli), "export-profile", str(profile)], cwd=project, expected=2)
         self.command("refuse-skill-overwrite", [str(cli), "export-skill", str(skill)], cwd=project, expected=2)
+        poll_skill = self.work / "exported-poll-review"
+        self.command("export-poll-review", [str(cli), "export-skill", str(poll_skill), "--name", "poll-review"], cwd=project)
+        self.command("refuse-poll-review-overwrite", [str(cli), "export-skill", str(poll_skill), "--name", "poll-review"],
+                     cwd=project, expected=2)
+        timer = [str(python), "-I", str(poll_skill / "scripts/timer.py")]
+        record = project / "timer-fixture"
+        self.command("start-installed-timer", [*timer, "start", "--record", str(record), "--seconds", "0.001",
+                     "--task", "offline-fixture", "--generation", "1", "--cycle", "1",
+                     "--root", "fixture-engineer", "--helper", "fixture-reviewer",
+                     "--job-kind", "synthetic", "--job-handle", "fixture-handle"], cwd=project)
+        due = json.loads(self.command("wait-installed-timer", [*timer, "wait", "--record", str(record)], cwd=project))
+        if not due["due"] or due["binding"]["job_handle"] != "fixture-handle":
+            raise RuntimeError("Installed timer did not preserve its binding")
+        self.command("refuse-duplicate-timer-wait", [*timer, "wait", "--record", str(record)], cwd=project, expected=2)
+        self.command("cancel-installed-timer", [*timer, "cancel", "--record", str(record)], cwd=project)
+        cancelled = json.loads(self.command("inspect-installed-timer", [*timer, "status", "--record", str(record)], cwd=project))
+        if cancelled["state"] != "cancelled" or cancelled["due"]:
+            raise RuntimeError("Installed timer did not honor cancellation")
+        self.report["timer_fixture"] = {"outcome": "passed", "model_calls": 0, "wakes": 0}
         prefix = [str(python), "-I", str(skill / "scripts/scheduler.py"), "--", "--project", str(profile)]
         info = json.loads(self.command("installed-skill-helper", [*prefix, "project-info"], cwd=project))
         if Path(info["state_dir"]).exists():
@@ -207,9 +234,10 @@ class Verification:
         self.report["offline_fixture"] = {"jobs": 1, "outcome": status["observed_state"],
                                           "model_calls": 0, "continuations": 0, "revocation": "passed",
                                           "progress_capture": "revoked_without_contact"}
-        wheelhouse = self.work / "wheelhouse"
-        self.command("download-optional-transport", [str(python), "-I", "-m", "pip", "download", "--only-binary=:all:",
-                     "--no-deps", "--dest", str(wheelhouse), "websockets>=15,<18"])
+        wheelhouse = self.wheelhouse or self.work / "wheelhouse"
+        if self.wheelhouse is None:
+            self.command("download-optional-transport", [str(python), "-I", "-m", "pip", "download", "--only-binary=:all:",
+                         "--no-deps", "--dest", str(wheelhouse), "websockets>=15,<18"])
         optional = self.work / "codex-env"
         self.command("create-codex-env", [self.python, "-m", "venv", str(optional)])
         optional_python = optional / "bin/python"
@@ -253,10 +281,11 @@ def main():
     parser.add_argument("--work-dir", type=Path, required=True, help="New ignored directory; existing directories are refused")
     parser.add_argument("--python", default=sys.executable, help="Interpreter for fresh install environments")
     parser.add_argument("--artifacts", type=Path, help="Reuse an existing wheel/source pair; still audit against current source")
+    parser.add_argument("--wheelhouse", type=Path, help="Use cached optional dependency wheels with no network download")
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Release verification currently requires a POSIX host")
-    verification = Verification(Path(__file__).resolve().parent.parent, args.work_dir, args.python, args.artifacts)
+    verification = Verification(Path(__file__).resolve().parent.parent, args.work_dir, args.python, args.artifacts, args.wheelhouse)
     try:
         verification.run()
     except Exception as error:

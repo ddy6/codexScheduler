@@ -1,5 +1,9 @@
 # Install and try a local job
 
+For the standalone reviewer/poller workflow, follow the
+[lightweight skill setup](../skills/poll-review/references/hosts.md). It can be copied
+without installing this runtime. The instructions below cover durable local jobs.
+
 Install from the repository as shown in the [README](../README.md), or install a
 wheel you built locally. There is no package-index publication step in this
 project's release check. Keep the chosen environment active when changing projects.
@@ -67,6 +71,15 @@ selection remains available through `--runtime` or `CODEX_SCHEDULER_ROOT`.
 
 Exporting refuses an existing folder. Review an older installation before
 replacing it. No global installation or update happens automatically.
+
+To export the independent reviewer/poller skill instead, select it explicitly:
+
+```sh
+codex-scheduler export-skill ~/.agents/skills/poll-review --name poll-review
+```
+
+This bundle includes a standalone timer and requires no runtime package after
+export. It does not configure agent delivery or change existing scheduler grants.
 
 ## Enable completion only for an approved task
 

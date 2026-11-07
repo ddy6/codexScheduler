@@ -10,7 +10,7 @@ import sys
 from .registry import Registry, SchedulerError
 from .runner import launch
 from .project import DEFAULT_LIMITS, Project
-from .assets import export_profile, export_skill, package_version
+from .assets import SKILLS, export_profile, export_skill, package_version
 from .transport import receive_limit
 
 
@@ -69,10 +69,12 @@ def main(argv=None):
     for name in ("export-skill", "export-profile"):
         command = commands.add_parser(name, help="Copy a bundled setup asset; refuse an existing destination")
         command.add_argument("destination", type=Path)
+        if name == "export-skill":
+            command.add_argument("--name", choices=tuple(SKILLS), default="bounded-workflow")
     args = parser.parse_args(argv)
     try:
         if args.action in {"export-skill", "export-profile"}:
-            result = export_skill(args.destination) if args.action == "export-skill" else export_profile(args.destination)
+            result = export_skill(args.destination, args.name) if args.action == "export-skill" else export_profile(args.destination)
             print(json.dumps(result, indent=2))
             return 0
         project = Project.load(args.project) if args.project else None

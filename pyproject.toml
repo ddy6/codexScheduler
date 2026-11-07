@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "codex-scheduler"
 version = "0.1.0"
-description = "Bounded local jobs and completion delivery for a dedicated Codex worker"
+description = "Small-context review and poll timers, with bounded Codex job delivery"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -42,4 +42,8 @@ include-package-data = false
 "share/codex-scheduler/skills/bounded-workflow/agents" = ["skills/bounded-workflow/agents/openai.yaml"]
 "share/codex-scheduler/skills/bounded-workflow/references" = ["skills/bounded-workflow/references/usage.md"]
 "share/codex-scheduler/skills/bounded-workflow/scripts" = ["skills/bounded-workflow/scripts/scheduler.py"]
+"share/codex-scheduler/skills/poll-review" = ["skills/poll-review/SKILL.md"]
+"share/codex-scheduler/skills/poll-review/agents" = ["skills/poll-review/agents/openai.yaml"]
+"share/codex-scheduler/skills/poll-review/references" = ["skills/poll-review/references/hosts.md", "skills/poll-review/references/timer.md"]
+"share/codex-scheduler/skills/poll-review/scripts" = ["skills/poll-review/scripts/timer.py"]
 "share/codex-scheduler/examples" = ["examples/project.toml"]

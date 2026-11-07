@@ -7,6 +7,7 @@ import unittest
 import zipfile
 
 from tools.verify_release import inspect_artifact
+from codex_scheduler.assets import SKILLS
 
 
 class ArtifactTests(unittest.TestCase):
@@ -26,6 +27,11 @@ class ArtifactTests(unittest.TestCase):
             "fixture.data/data/share/codex-scheduler/skills/bounded-workflow/SKILL.md": self.public["skills/bounded-workflow/SKILL.md"],
             "fixture.dist-info/licenses/LICENSE": self.public["LICENSE"],
         }
+        for skill, members in SKILLS.items():
+            for member in members:
+                name = f"skills/{skill}/{member}"
+                self.public[name] = ("fixture " + name + "\n").encode()
+                self.entries["fixture.data/data/share/codex-scheduler/" + name] = self.public[name]
 
     def wheel(self, extra=None):
         path = self.root / "fixture.whl"
@@ -36,7 +42,7 @@ class ArtifactTests(unittest.TestCase):
 
     def test_review_accepts_only_matching_public_inputs_and_expected_metadata(self):
         result = inspect_artifact(self.wheel({"fixture.dist-info/METADATA": b"public metadata"}), self.public, [])
-        self.assertEqual(result["members"], 5)
+        self.assertEqual(result["members"], len(self.entries) + 1)
         self.assertEqual(len(result["sha256"]), 64)
 
     def test_private_guidance_state_and_unsafe_paths_are_rejected(self):
@@ -44,6 +50,14 @@ class ArtifactTests(unittest.TestCase):
                      "docs/internal/note.md", "../outside.py", "/absolute.py"):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 inspect_artifact(self.wheel({name: b"must stay private"}), self.public, [])
+
+    def test_missing_standalone_timer_or_reference_rejects_artifact(self):
+        for member in ("scripts/timer.py", "references/hosts.md"):
+            name = "fixture.data/data/share/codex-scheduler/skills/poll-review/" + member
+            data = self.entries.pop(name)
+            with self.subTest(member=member), self.assertRaisesRegex(ValueError, "missing skill resource"):
+                inspect_artifact(self.wheel(), self.public, [])
+            self.entries[name] = data
 
     def test_ignored_or_changed_code_is_not_a_public_build_input(self):
         for name in ("codex_scheduler/local_probe.py", "codex_scheduler/__main__.py"):

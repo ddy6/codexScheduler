@@ -1,5 +1,33 @@
 # Architecture
 
+## Lightweight team workflow
+
+The `poll-review` skill keeps the engineer as the human interface and source writer.
+One helper reviews explicit frozen batches and owns the next deadline. Its supplied
+and accumulated context stay bounded; neither role requires a particular model.
+
+```mermaid
+flowchart LR
+    Engineer -->|frozen batch and exact handoff| Helper[Small-context reviewer / poller]
+    Helper --> Timer[Standalone monotonic timer]
+    Timer -->|due evidence| Helper
+    Helper -->|one authorized host return| Engineer
+    Engineer -->|inspect owned handle| Job
+```
+
+The timer stores immutable timing records, refuses duplicate waiters, supports
+cancellation and checks hashes/time around bounded review reads. It has no agent
+transport or job controller. Host state must preserve bindings, finite allowance,
+send intent, deduplication and exclusive engineering ownership. If the host cannot
+resume the exact root safely, use manual polling. No universal adapter is provided.
+
+This workflow and the durable dispatcher below must not both own a job's return.
+Switch only at a reconciled boundary with counters and unknown effects preserved.
+See [host capabilities](../skills/poll-review/references/hosts.md) and
+[timer limitations](../skills/poll-review/references/timer.md).
+
+## Durable scheduler
+
 The runtime owns waiting, evidence, and delivery. The engineering worker owns
 technical judgment. The user-facing conversation owns requirements and decisions.
 Worker creation and model selection belong to the client setup.

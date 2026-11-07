@@ -5,6 +5,10 @@ description: Use Codex Scheduler to register local engineering jobs, yield durin
 
 # Codex Scheduler
 
+This skill uses a durable controller and dedicated worker. For an existing native
+team with a small-context reviewer/poller, choose the separate `poll-review` skill
+when installed. Never let both workflows deliver continuation for the same job.
+
 Use the maintained runtime for waiting and delivery. Keep engineering decisions
 with the worker and requirements or approvals with the user-facing conversation.
 Loading this skill or reading a project profile does not authorize a task,
